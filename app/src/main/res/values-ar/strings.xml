@@ -47,7 +47,15 @@
     <string name="signed_out">تم تسجيل الخروج. تبقى ملفاتك المرفوعة في تيليجرام.</string>
     <string name="confirm_other_device">أكّد تسجيل الدخول من جهاز تيليجرام الآخر. رابط التأكيد:</string>
     <string name="unsupported_auth">يتطلب تسجيل الدخول خطوة إضافية غير مدعومة في هذه النسخة. أكمل إعداد الحساب في تطبيق تيليجرام الرسمي أولًا.</string>
-    <string name="connecting">جارٍ الاتصال بتيليجرام…</string>
+    <string name="connecting">جارٍ تهيئة تسجيل الدخول إلى تيليجرام… يُفترض ألا يتجاوز ذلك 30 ثانية.</string>
+    <string name="connection_failed">تعذّرت تهيئة تيليجرام</string>
+    <string name="retry_connection">إعادة محاولة الاتصال</string>
+    <string name="edit_api">تعديل بيانات API</string>
+    <string name="network_unavailable">تيليجرام ينتظر اتصالًا بالشبكة.</string>
+    <string name="network_connecting">جارٍ اتصال تيليجرام بخوادمه.</string>
+    <string name="network_proxy">جارٍ اتصال تيليجرام عبر وكيل.</string>
+    <string name="network_updating">جارٍ تحديث اتصال تيليجرام.</string>
+    <string name="network_ready">اتصال تيليجرام جاهز.</string>
     <string name="auth_privacy">عميل تيليجرام مستقل. تُحفظ الملفات في حسابك. التخزين السحابي لتيليجرام ليس مشفرًا من طرف إلى طرف.</string>
     <string name="file_actions">خيارات الملف</string>
     <string name="download">حفظ على الجهاز</string>

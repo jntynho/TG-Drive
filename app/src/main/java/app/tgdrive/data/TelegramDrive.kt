@@ -6,18 +6,19 @@ import android.os.Build
 import android.provider.OpenableColumns
 import app.tgdrive.BuildConfig
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-enum class LoginStep { CONFIGURE, CONNECTING, PHONE, CODE, PASSWORD, OTHER_DEVICE, READY, UNSUPPORTED, CLOSED }
+enum class LoginStep { CONFIGURE, CONNECTING, CONNECTION_ERROR, PHONE, CODE, PASSWORD, OTHER_DEVICE, READY, UNSUPPORTED, CLOSED }
+enum class TelegramNetwork { UNKNOWN, WAITING_FOR_NETWORK, CONNECTING, CONNECTING_TO_PROXY, UPDATING, READY }
 data class DriveState(
     val login: LoginStep = LoginStep.CONFIGURE,
     val busy: Boolean = false,
@@ -30,14 +31,22 @@ data class DriveState(
     val confirmationLink: String = "",
     val transfer: String? = null,
     val progress: Float? = null,
+    val authError: String? = null,
+    val network: TelegramNetwork = TelegramNetwork.UNKNOWN,
 )
 
-class TelegramDrive(private val context: Context) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+class TelegramDrive internal constructor(
+    private val context: Context,
+    private val secure: SessionSettings,
+    private val clients: TdConnectionFactory,
+    private val scope: CoroutineScope,
+    private val timeoutMillis: Long = 30_000,
+) {
+    constructor(context: Context) : this(context, SecureSettings(context), NativeTdConnectionFactory,
+        CoroutineScope(SupervisorJob() + Dispatchers.Main))
     private val mutable = MutableStateFlow(DriveState())
     val state = mutable.asStateFlow()
-    private val secure = SecureSettings(context)
-    private var client: Client? = null
+    private var client: TdConnection? = null
     private var apiId = 0
     private var apiHash = ""
     private var chatId = 0L
@@ -49,13 +58,31 @@ class TelegramDrive(private val context: Context) {
     private var syncJob: Job? = null
     private var initializeJob: Job? = null
     private val persistMutex = Mutex()
+    private data class Update(val generation: Long, val value: TdApi.Object)
+    private val updates = Channel<Update>(Channel.UNLIMITED)
+    private var generation = 0L
+    private var initializationWatchdog: Job? = null
+    private var closed = CompletableDeferred<Unit>()
+    private var editingCredentials = false
 
     init {
+        // TDLib requires updates to be applied in receive order. In particular,
+        // SetTdlibParameters may emit WaitPhoneNumber BEFORE its Ok response.
+        scope.launch {
+            for (update in updates) {
+                if (update.generation != generation) continue
+                try { onUpdate(update.value) }
+                catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    fail(safeReason(e.message ?: "Could not process a Telegram update."))
+                }
+            }
+        }
         runCatching {
             val id = secure.get("api-id") ?: BuildConfig.TELEGRAM_API_ID
             val hash = secure.get("api-hash") ?: BuildConfig.TELEGRAM_API_HASH
             if (id.toIntOrNull() != null && hash.matches(Regex("[a-fA-F0-9]{32}"))) connect(id.toInt(), hash)
-        }.onFailure { fail("Cannot open secure settings. Reinstalling resets this installation's local session.") }
+        }.onFailure { connectionFailed("Could not open local secure settings. You can review your API configuration.") }
     }
 
     fun configure(id: String, hash: String) {
@@ -63,20 +90,62 @@ class TelegramDrive(private val context: Context) {
         if (number == null || number <= 0 || !hash.matches(Regex("[a-fA-F0-9]{32}"))) {
             fail("Enter a valid Telegram API ID and 32-character API hash."); return
         }
-        runCatching { secure.put("api-id", id); secure.put("api-hash", hash); connect(number, hash) }
-            .onFailure { fail("Could not initialize Telegram on this device.") }
+        if (state.value.busy) return
+        scope.launch {
+            mutable.update { it.copy(busy = true, error = null, authError = null) }
+            try {
+                if (client != null) {
+                    // Close, never LogOut/Destroy: editing app credentials must not delete a session or files.
+                    request(TdApi.Close())
+                    try { withTimeout(timeoutMillis) { closed.await() } }
+                    catch (_: TimeoutCancellationException) { error("Telegram did not close in time. Restart the app before editing credentials again.") }
+                }
+                secure.put("api-id", number.toString()); secure.put("api-hash", hash)
+                connect(number, hash)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                mutable.update { it.copy(login = LoginStep.CONFIGURE, busy = false, authError = safeReason(e.message ?: "Could not initialize Telegram on this device.")) }
+            }
+        }
     }
 
     private fun connect(id: Int, hash: String) {
         if (client != null) return
         apiId = id; apiHash = hash; loggingOut = false
-        mutable.update { it.copy(login = LoginStep.CONNECTING, error = null) }
-        System.loadLibrary("tdjni")
-        Client.execute(TdApi.SetLogVerbosityLevel(0))
-        client = Client.create({ update -> scope.launch { onUpdate(update) } }, { fail("Telegram connection error.") }, { fail("Telegram request error.") })
+        editingCredentials = false
+        closed = CompletableDeferred()
+        val current = ++generation
+        startInitializationWatchdog()
+        try {
+            client = clients.create({ update -> updates.trySend(Update(current, update)) }, {
+                scope.launch {
+                    if (current == generation) fail("Telegram could not process a connection update. Retry or review your API configuration.")
+                }
+            })
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            connectionFailed("Could not load Telegram on this device (${e.javaClass.simpleName}).")
+        }
     }
 
-    private suspend fun request(function: TdApi.Function<*>): TdApi.Object = suspendCancellableCoroutine { c ->
+    private fun startInitializationWatchdog() {
+        initializationWatchdog?.cancel()
+        mutable.update { it.copy(login = LoginStep.CONNECTING, busy = false, error = null, authError = null) }
+        initializationWatchdog = scope.launch {
+            delay(timeoutMillis)
+            if (state.value.login == LoginStep.CONNECTING) {
+                connectionFailed("Telegram initialization timed out. Check connectivity, then retry or review your API configuration.")
+            }
+        }
+    }
+
+    private suspend fun request(function: TdApi.Function<*>, timeout: Long = timeoutMillis): TdApi.Object = try {
+        withTimeout(timeout) { sendRequest(function) }
+    } catch (_: TimeoutCancellationException) {
+        error("Telegram did not respond in time. Check connectivity before retrying. A pending sign-in request may still complete.")
+    }
+
+    private suspend fun sendRequest(function: TdApi.Function<*>): TdApi.Object = suspendCancellableCoroutine { c ->
         val td = client
         if (td == null) { c.resumeWithException(IllegalStateException("Telegram is not connected.")); return@suspendCancellableCoroutine }
         td.send(function) { result ->
@@ -90,6 +159,14 @@ class TelegramDrive(private val context: Context) {
     private suspend fun onUpdate(update: TdApi.Object) {
         when (update) {
             is TdApi.UpdateAuthorizationState -> authorization(update.authorizationState)
+            is TdApi.UpdateConnectionState -> mutable.update { it.copy(network = when (update.state) {
+                is TdApi.ConnectionStateWaitingForNetwork -> TelegramNetwork.WAITING_FOR_NETWORK
+                is TdApi.ConnectionStateConnectingToProxy -> TelegramNetwork.CONNECTING_TO_PROXY
+                is TdApi.ConnectionStateConnecting -> TelegramNetwork.CONNECTING
+                is TdApi.ConnectionStateUpdating -> TelegramNetwork.UPDATING
+                is TdApi.ConnectionStateReady -> TelegramNetwork.READY
+                else -> TelegramNetwork.UNKNOWN
+            }) }
             is TdApi.UpdateMessageSendSucceeded -> {
                 upsert(update.message)
                 val waiter = sent.remove(update.oldMessageId)
@@ -115,9 +192,22 @@ class TelegramDrive(private val context: Context) {
     }
 
     private suspend fun authorization(auth: TdApi.AuthorizationState) {
+        if (auth is TdApi.AuthorizationStateClosed) {
+            ++generation // Ignore late responses/updates from the closed native client.
+            closed.complete(Unit)
+            initializationWatchdog?.cancel(); syncJob?.cancel(); initializeJob?.cancel()
+            client = null; chatId = 0; store = null
+            sent.values.forEach { it.completeExceptionally(IllegalStateException("Telegram connection was closed.")) }
+            sent.clear(); earlyResults.clear()
+            if (editingCredentials) return
+            if (loggingOut) mutable.value = DriveState(login = LoginStep.CLOSED, info = "Signed out. Your cloud files were not deleted.")
+            else connectionFailed("Telegram closed its connection. Retry to reconnect; your cloud files were not deleted.")
+            return
+        }
+        if (editingCredentials) return
         val step = when (auth) {
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
-                runCatching {
+                try {
                     request(TdApi.SetTdlibParameters().apply {
                         databaseDirectory = File(context.noBackupFilesDir, "telegram-db").absolutePath
                         filesDirectory = File(context.filesDir, "telegram-files").absolutePath
@@ -127,8 +217,13 @@ class TelegramDrive(private val context: Context) {
                         systemLanguageCode = java.util.Locale.getDefault().language
                         deviceModel = Build.MODEL; systemVersion = Build.VERSION.RELEASE; applicationVersion = BuildConfig.VERSION_NAME
                     })
-                }.onFailure { fail(it.message ?: "Telegram initialization failed.") }
-                LoginStep.CONNECTING
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (!editingCredentials) connectionFailed(safeReason(e.message ?: "Telegram initialization failed."))
+                }
+                // Never write CONNECTING here: this suspended operation must not
+                // overwrite a newer auth state or hide an initialization error.
+                return
             }
             is TdApi.AuthorizationStateWaitPhoneNumber -> LoginStep.PHONE
             is TdApi.AuthorizationStateWaitCode -> LoginStep.CODE
@@ -137,22 +232,20 @@ class TelegramDrive(private val context: Context) {
                 mutable.update { it.copy(confirmationLink = auth.link) }; LoginStep.OTHER_DEVICE
             }
             is TdApi.AuthorizationStateReady -> {
-                mutable.update { it.copy(login = LoginStep.READY, busy = false, error = null) }
+                initializationWatchdog?.cancel()
+                mutable.update { it.copy(login = LoginStep.READY, busy = false, error = null, authError = null) }
                 initializeJob?.cancel()
                 initializeJob = scope.launch { initializeAccount() }
-                return
-            }
-            is TdApi.AuthorizationStateClosed -> {
-                syncJob?.cancel()
-                initializeJob?.cancel()
-                client = null; chatId = 0; store = null
-                mutable.value = DriveState(login = LoginStep.CLOSED, info = "Signed out. Your cloud files were not deleted.")
                 return
             }
             is TdApi.AuthorizationStateLoggingOut, is TdApi.AuthorizationStateClosing -> LoginStep.CONNECTING
             else -> LoginStep.UNSUPPORTED
         }
-        mutable.update { it.copy(login = step, busy = false) }
+        if (step == LoginStep.CONNECTING) startInitializationWatchdog()
+        else {
+            initializationWatchdog?.cancel()
+            mutable.update { it.copy(login = step, busy = false, authError = null) }
+        }
     }
 
     fun login(value: String) = action {
@@ -165,7 +258,30 @@ class TelegramDrive(private val context: Context) {
     }
 
     fun reconnect() {
-        runCatching { connect(apiId, apiHash) }.onFailure { fail("Unable to reconnect.") }
+        if (state.value.busy) return
+        if (client == null) {
+            if (apiId <= 0 || apiHash.isBlank()) { editConfiguration(); return }
+            connect(apiId, apiHash)
+        } else {
+            startInitializationWatchdog()
+            val current = generation
+            scope.launch {
+                try {
+                    val auth = request(TdApi.GetAuthorizationState()) as TdApi.AuthorizationState
+                    updates.send(Update(current, TdApi.UpdateAuthorizationState(auth)))
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    connectionFailed(safeReason(e.message ?: "Unable to reconnect."))
+                }
+            }
+        }
+    }
+
+    fun editConfiguration() {
+        if (state.value.login == LoginStep.READY || state.value.busy) return
+        editingCredentials = true
+        initializationWatchdog?.cancel()
+        mutable.update { it.copy(login = LoginStep.CONFIGURE, busy = false, authError = null, error = null) }
     }
 
     private suspend fun initializeAccount() {
@@ -291,7 +407,7 @@ class TelegramDrive(private val context: Context) {
             val message = request(TdApi.GetMessage(chatId, file.messageId)) as TdApi.Message
             val content = message.content as? TdApi.MessageDocument ?: error("This file is no longer available.")
             activeFileId = content.document.document.id
-            val result = withTimeout(60 * 60 * 1000L) { request(TdApi.DownloadFile(activeFileId, 16, 0, 0, true)) as TdApi.File }
+            val result = request(TdApi.DownloadFile(activeFileId, 16, 0, 0, true), 60 * 60 * 1000L) as TdApi.File
             check(result.local.isDownloadingCompleted) { "Download did not finish. Please retry." }
             mutable.update { it.copy(transfer = "Saving ${file.name}", progress = null) }
             withContext(Dispatchers.IO) {
@@ -317,11 +433,20 @@ class TelegramDrive(private val context: Context) {
         try { request(TdApi.LogOut()) } catch (e: Exception) { loggingOut = false; throw e }
     }
     fun clearNotice() { mutable.update { it.copy(error = null, info = null) } }
-    fun fail(message: String) { mutable.update { it.copy(error = message, busy = false) } }
+    private fun connectionFailed(message: String) {
+        initializationWatchdog?.cancel()
+        mutable.update { it.copy(login = LoginStep.CONNECTION_ERROR, authError = safeReason(message), busy = false) }
+    }
+    private fun safeReason(message: String): String = (if (apiHash.isBlank()) message else message.replace(apiHash, "[redacted]", ignoreCase = true))
+        .replace(Regex("[\\r\\n\\p{Cntrl}]"), " ").take(300)
+    fun fail(message: String) {
+        if (state.value.login == LoginStep.CONNECTING || state.value.login == LoginStep.CONNECTION_ERROR) connectionFailed(message)
+        else mutable.update { it.copy(error = safeReason(message), authError = if (it.login == LoginStep.READY) it.authError else safeReason(message), busy = false) }
+    }
     private fun action(block: suspend () -> Unit) {
         if (state.value.busy) return
         scope.launch {
-            mutable.update { it.copy(busy = true, error = null) }
+            mutable.update { it.copy(busy = true, error = null, authError = null) }
             try { block() } catch (e: Exception) { if (e is CancellationException) throw e; fail(e.message ?: "The operation failed.") }
             finally { mutable.update { it.copy(busy = false) } }
         }

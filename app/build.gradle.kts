@@ -23,8 +23,8 @@ android {
         applicationId = "app.tgdrive"
         minSdk = 26
         targetSdk = 36
-        versionCode = setting("APP_VERSION_CODE").ifBlank { "1" }.toInt().also { require(it > 0) }
-        versionName = setting("APP_VERSION_NAME").ifBlank { "0.1.0" }
+        versionCode = setting("APP_VERSION_CODE").ifBlank { "2" }.toInt().also { require(it > 0) }
+        versionName = setting("APP_VERSION_NAME").ifBlank { "0.1.1" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TELEGRAM_API_ID", literal(setting("TELEGRAM_API_ID")))
         buildConfigField("String", "TELEGRAM_API_HASH", literal(setting("TELEGRAM_API_HASH")))
@@ -77,6 +77,7 @@ dependencies {
     // Community prebuilt of Telegram's TDLib; see docs/SECURITY.md.
     implementation("io.github.tdlib-android:core:0.1.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.05.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

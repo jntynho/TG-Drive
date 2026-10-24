@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
                     configure = drive::configure, login = drive::login, refresh = drive::refresh,
                     createFolder = drive::addFolder, delete = drive::delete, logout = drive::logout,
                     reconnect = drive::reconnect, clearNotice = drive::clearNotice,
+                    editCredentials = drive::editConfiguration,
                     upload = {
                         uploadFolder = folder
                         upload.launch(arrayOf("*/*"))

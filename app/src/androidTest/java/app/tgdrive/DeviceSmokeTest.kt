@@ -40,6 +40,23 @@ class DeviceSmokeTest {
         compose.onNodeWithText("Cancel").performClick()
         assertFalse(deleted)
     }
+    @Test fun initializationErrorRemainsVisibleAndOffersRetryAndConfiguration() {
+        var retried = false
+        var edited = false
+        compose.setContent {
+            DriveTheme {
+                DriveScreen(state = DriveState(login = LoginStep.CONNECTION_ERROR, authError = "Initialization test failure"),
+                    folder = "", onFolder = {}, configure = { _, _ -> }, login = {}, refresh = {}, createFolder = {},
+                    delete = {}, logout = {}, reconnect = { retried = true }, clearNotice = {}, upload = {}, download = {},
+                    editCredentials = { edited = true })
+            }
+        }
+        compose.onNodeWithText("Initialization test failure").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Retry connection").performScrollTo().performClick()
+        assertTrue(retried)
+        compose.onNodeWithText("Edit API credentials").performScrollTo().performClick()
+        assertTrue(edited)
+    }
     private fun render(state: DriveState, onDelete: (DriveFile) -> Unit = {}) {
         compose.setContent { DriveTheme { DriveScreen(state, "", {}, { _, _ -> }, {}, {}, {}, onDelete, {}, {}, {}, {}, {}) } }
     }

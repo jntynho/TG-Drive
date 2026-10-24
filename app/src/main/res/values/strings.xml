@@ -47,7 +47,15 @@
     <string name="signed_out">You are signed out. Your uploaded files remain in Telegram.</string>
     <string name="confirm_other_device">Confirm this sign-in on your other Telegram device. Confirmation link:</string>
     <string name="unsupported_auth">This sign-in requires an additional Telegram step not supported in this version. Complete account setup in the official Telegram app first.</string>
-    <string name="connecting">Connecting securely to Telegram…</string>
+    <string name="connecting">Preparing Telegram sign-in… This should take less than 30 seconds.</string>
+    <string name="connection_failed">Telegram could not initialize</string>
+    <string name="retry_connection">Retry connection</string>
+    <string name="edit_api">Edit API credentials</string>
+    <string name="network_unavailable">Telegram is waiting for a network connection.</string>
+    <string name="network_connecting">Telegram is connecting to its servers.</string>
+    <string name="network_proxy">Telegram is connecting through a proxy.</string>
+    <string name="network_updating">Telegram is syncing its connection.</string>
+    <string name="network_ready">Telegram connection is ready.</string>
     <string name="auth_privacy">Independent Telegram client. Your files go to your own account. Telegram cloud storage is not end-to-end encrypted.</string>
     <string name="file_actions">File actions</string>
     <string name="download">Save to device</string>

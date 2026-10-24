@@ -40,6 +40,7 @@ fun DriveScreen(
     configure: (String, String) -> Unit, login: (String) -> Unit, refresh: () -> Unit,
     createFolder: (String) -> Unit, delete: (DriveFile) -> Unit, logout: () -> Unit,
     reconnect: () -> Unit, clearNotice: () -> Unit, upload: () -> Unit, download: (DriveFile) -> Unit,
+    editCredentials: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     var privacy by remember { mutableStateOf(false) }
@@ -78,7 +79,7 @@ fun DriveScreen(
         },
     ) { padding ->
         if (!ready) {
-            AuthPanel(state, configure, login, reconnect, Modifier.padding(padding))
+            AuthPanel(state, configure, login, reconnect, editCredentials, Modifier.padding(padding))
         } else {
             val files = remember(state.files, folder, query, order) { selectFiles(state.files, folder, query, order) }
             val folders = (state.folders + state.files.map { it.folder }).filter { it.isNotEmpty() }.sorted()
@@ -165,7 +166,7 @@ fun DriveScreen(
 }
 
 @Composable
-private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, modifier: Modifier) {
+private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier) {
     var apiId by remember { mutableStateOf("") }
     var apiHash by remember { mutableStateOf("") }
     var value by remember(state.login) { mutableStateOf("") }
@@ -180,13 +181,15 @@ private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, lo
         }
         Card {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 when (state.login) {
                     LoginStep.CONFIGURE -> {
                         Text(stringResource(R.string.configure), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(R.string.configure_body), style = MaterialTheme.typography.bodyMedium)
-                        OutlinedTextField(apiId, { apiId = it }, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(apiHash, { apiHash = it }, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                        Button(onClick = { configure(apiId.trim(), apiHash.trim()) }, enabled = apiId.isNotBlank() && apiHash.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                        OutlinedTextField(apiId, { apiId = it }, enabled = !state.busy, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(apiHash, { apiHash = it }, enabled = !state.busy, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                        Button(onClick = { configure(apiId.trim(), apiHash.trim()) }, enabled = apiId.isNotBlank() && apiHash.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         TextButton(onClick = { uri.openUri("https://my.telegram.org/apps") }) { Text(stringResource(R.string.get_api)) }
                     }
                     LoginStep.PHONE, LoginStep.CODE, LoginStep.PASSWORD -> {
@@ -198,10 +201,17 @@ private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, lo
                             keyboardOptions = KeyboardOptions(keyboardType = when(state.login) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
                         Button(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (state.login == LoginStep.PHONE) TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.CLOSED -> {
                         Text(stringResource(R.string.signed_out))
                         Button(onClick = reconnect) { Text(stringResource(R.string.connect_telegram)) }
+                        TextButton(onClick = editCredentials) { Text(stringResource(R.string.edit_api)) }
+                    }
+                    LoginStep.CONNECTION_ERROR -> {
+                        Text(stringResource(R.string.connection_failed), style = MaterialTheme.typography.titleLarge)
+                        Button(onClick = reconnect, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_connection)) }
+                        TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.OTHER_DEVICE -> {
                         Text(stringResource(R.string.confirm_other_device))
@@ -210,6 +220,13 @@ private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, lo
                     LoginStep.UNSUPPORTED -> Text(stringResource(R.string.unsupported_auth))
                     else -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(stringResource(R.string.connecting)) }
                 }
+                if (state.network != TelegramNetwork.UNKNOWN) Text(stringResource(when (state.network) {
+                    TelegramNetwork.WAITING_FOR_NETWORK -> R.string.network_unavailable
+                    TelegramNetwork.CONNECTING -> R.string.network_connecting
+                    TelegramNetwork.CONNECTING_TO_PROXY -> R.string.network_proxy
+                    TelegramNetwork.UPDATING -> R.string.network_updating
+                    else -> R.string.network_ready
+                }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Text(stringResource(R.string.auth_privacy), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
