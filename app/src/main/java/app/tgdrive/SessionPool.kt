@@ -66,7 +66,7 @@ class SessionPool(private val context: Context) {
                 if(!id.isNullOrBlank()&&!hash.isNullOrBlank())withContext(Dispatchers.IO){
                     val settings=app.tgdrive.data.SecureSettings(context,profile.id);settings.put("api-id",id);settings.put("api-hash",hash)
                 }
-                mutableProfiles.value+=profile;mutableActive.value=profile.id;save()
+                mutableProfiles.value+=profile;switch(profile.id)
             }catch(e:Exception){original.library.report(e)}
         }
     }

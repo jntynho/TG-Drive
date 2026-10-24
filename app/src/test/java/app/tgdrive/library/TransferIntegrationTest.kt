@@ -216,6 +216,16 @@ class TransferIntegrationTest {
         assertEquals(TaskState.COMPLETED,result.state);assertNotEquals(original.id,result.itemId)
         assertTrue(repo.db().local(original.id).missing);assertEquals(2,wire.uploadedIndices.size)
     }
+    @Test fun `local cleanup refuses a cloud copy changed after earlier verification`()=runBlocking {
+        open();val uri=source("original".toByteArray(),"keep-original.bin")
+        engine.enqueueUpload(listOf(uri));engine.drain(20_000)
+        val item=repo.state.value.items.single();engine.enqueue(TaskKind.VERIFY,item);engine.drain(20_000)
+        assertEquals(item.versionId,repo.db().local(item.id).verifiedVersion)
+        val part=repo.version(item.versionId).parts.single()
+        File(wire.files[part.messageId.toInt()]!!.local.path).writeBytes("modified".toByteArray())
+        assertTrue(runCatching{LibraryActions(repo,engine).validateLocalDeletion(listOf(item.id))}.isFailure)
+        assertEquals("original",File(uri.path!!).readText())
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]

@@ -34,7 +34,7 @@ import java.util.Date
                     if(task.total>0)LinearProgressIndicator(progress={(task.done.toFloat()/task.total).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())else LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
                 if(task.total>0)Text(if(task.kind in setOf(TaskKind.OCR,TaskKind.EXPORT))"${task.done} / ${task.total}" else "${formatBytes(task.done)} / ${formatBytes(task.total)}"+(if(task.speedBytesPerSecond>0)" · ${formatBytes(task.speedBytesPerSecond)}/s" else ""),style=MaterialTheme.typography.bodySmall)
-                if(task.error.isNotBlank())Text(task.error,style=MaterialTheme.typography.bodySmall,color=if(task.state==TaskState.FAILED)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                if(task.error.isNotBlank())Text(if(task.vaultId.isNotEmpty()&&task.vaultId !in state.unlockedVaultIds)"Unlock the vault to view transfer details." else task.error,style=MaterialTheme.typography.bodySmall,color=if(task.state==TaskState.FAILED)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     if(task.state !in setOf(TaskState.COMPLETED,TaskState.CANCELLED)){
                         if(task.state in setOf(TaskState.PAUSED,TaskState.FAILED,TaskState.RETRY_WAIT,TaskState.WAITING_FOR_UNLOCK,TaskState.WAITING_FOR_WIFI,TaskState.WAITING_FOR_CHARGING,TaskState.WAITING_FOR_NETWORK,TaskState.WAITING_FOR_DEVICE))TextButton(onClick={bundle.actions.run{bundle.transfers.retry(task.id);system.startTransfers()}}){Text("Resume / retry")}
@@ -72,7 +72,7 @@ import java.util.Date
                 Text("Destination: ${folderPath(rule.folderId,state.folders)}",style=MaterialTheme.typography.bodySmall)
                 Text(if(rule.lastScanAt==0L)"Not scanned yet" else "Last scan: ${DateFormat.getDateTimeInstance().format(Date(rule.lastScanAt))}",style=MaterialTheme.typography.bodySmall)
                 Text(if(rule.lastSuccessAt==0L)"No file success recorded yet" else "Last file success: ${DateFormat.getDateTimeInstance().format(Date(rule.lastSuccessAt))}",style=MaterialTheme.typography.bodySmall)
-                if(rule.error.isNotBlank())Text(rule.error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+                if(rule.error.isNotBlank())Text(if(rule.vaultId.isNotEmpty()&&rule.vaultId !in state.unlockedVaultIds)"Unlock the vault to inspect this backup." else rule.error,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
                 Row{TextButton(onClick={system.scanBackups(rule.id,false)}){Text("Scan now")};TextButton(onClick={rescanId=rule.id}){Text("Rescan all")};TextButton(onClick={removeId=rule.id}){Text("Remove")}}
             }
         }}

@@ -96,7 +96,7 @@ class MainActivity : FragmentActivity() {
             DriveTheme{
                 if(locked)Surface(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(32.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                     Text("Your space is locked",style=MaterialTheme.typography.headlineMedium);Spacer(Modifier.height(14.dp));Text("Use your device credential or biometrics to continue.");Spacer(Modifier.height(22.dp));Button(onClick={authenticate()}){Text("Unlock TG Drive")}
-                }}else NativeApp(bundle,app.sessions,system)
+                }}else key(active){NativeApp(bundle,app.sessions,system)}
                 if(!locked){
                     pickedTree?.let{uri->BackupWizard(uri,bundle)}
                     if(scannerOpen)ScannerWizard(bundle)

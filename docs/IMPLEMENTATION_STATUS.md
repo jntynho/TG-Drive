@@ -26,7 +26,7 @@ Scope follows the 34-item research report. Desktop/web client (#27) and Arabic U
 | 20 Import | User-selected Saved Messages document references, original captions retained | Imported content is not encrypted retroactively and cannot claim an unknown original hash |
 | 21 App privacy | Device credential/biometric lock, protected recents/screenshots, generic notifications | Device compromise and already granted exported copies are outside app lock |
 | 22 Encrypted vault | Tink authenticated streaming encryption, authenticated metadata, password and independent recovery wraps | Label/size/timing leak; no independent cryptographic audit; losing both credentials can lose access |
-| 23 Local cleanup | Review selected originals only after downloaded verification, rehash and cloud-reference checks, Android deletion consent | Offline/uncertain references never qualify; provider deletion support varies |
+| 23 Local cleanup | Review selected originals only after downloaded verification, fresh stored-part checksums and source rehash, Android deletion consent | Offline/uncertain references never qualify; provider deletion support varies |
 | 24 Diagnostics | Availability scan, full reconciliation, conflict tools and redacted report | Network failures are inconclusive; nothing is auto-deleted to “repair” an index |
 | 25 Public links | Optional server/client, expiry/password/revoke, content hash, retry idempotence, explicit copy consent | Requires deployment/TLS/owner token; exported vault copies are plaintext to the server; no deployment performed |
 | 26 Document picker | Read-only DocumentsProvider with account/app/vault checks | Materializes content before opening; writable provider integration is excluded |

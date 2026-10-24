@@ -46,7 +46,7 @@ Production distribution also requires independent crypto/native dependency revie
 
 ## Local validation evidence (2026-10-24)
 
-- Debug and Release each executed **59 unit/integration tests**, zero failures/errors. The 20 queue/repository integration cases use a fake Telegram transport, not a live account.
+- Debug and Release each executed **60 unit/integration tests**, zero failures/errors. The 21 queue/repository integration cases use a fake Telegram transport, not a live account.
 - Debug/Release lint: zero errors; 21 warnings (including dependency notices and API/style suggestions). Warnings were not disabled to obtain a pass.
 - Debug APK, instrumentation APK, minified unsigned Release APK and unsigned Release AAB built locally with JDK 21/SDK 36. Local unsigned artifacts cannot update the signed workflow application in place.
 - Twelve packaged native libraries passed ELF alignment: 16 KB on 64-bit ABIs and 4 KB on 32-bit ABIs. ZIP alignment and actionlint are checked separately.

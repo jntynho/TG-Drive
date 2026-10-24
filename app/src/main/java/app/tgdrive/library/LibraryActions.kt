@@ -123,7 +123,11 @@ class LibraryActions(val repository: LibraryRepository, val transfers: TransferE
         ids.map { id ->
             val item = candidates[id] ?: error("Verify this file's downloaded content before deleting its local copy.")
             val version = repository.version(item.versionId)
-            version.parts.forEach { repository.remote.document(it.messageId) }
+            version.parts.forEach { part ->
+                require(part.storedSha256.isNotEmpty()) { "This version lacks stored-part checksums. Re-upload and verify before deleting its local original." }
+                val remote = repository.remote.readAll(part.messageId)
+                check(remote.length()==part.storedSize && remote.sha256()==part.storedSha256) { "The cloud copy changed since verification. No local deletion was approved." }
+            }
             val uri = Uri.parse(repository.db().local(id).sourceUri)
             val digest = MessageDigest.getInstance("SHA-256")
             repository.context.contentResolver.openInputStream(uri)?.use { input ->
