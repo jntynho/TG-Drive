@@ -42,6 +42,7 @@ class DriveDataSource(private val pool: SessionPool) : BaseDataSource(true) {
         if(remaining<=0)return C.RESULT_END_OF_INPUT
         val content=version?:throw IOException("Media source is closed")
         val repo=repository?:throw IOException("Media source is closed")
+        if(!repo.vaults.isUnlocked(vault))throw IOException("The vault was locked. Unlock it before resuming playback.")
         var base=0L
         val index=content.parts.indexOfFirst { part->if(position<base+part.plainSize)true else {base+=part.plainSize;false} }
         if(index<0)throw IOException("The content manifest has a missing range.")

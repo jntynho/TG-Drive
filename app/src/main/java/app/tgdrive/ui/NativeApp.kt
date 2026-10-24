@@ -97,6 +97,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
             TextButton(onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(Icons.Outlined.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
             if(auth.login==LoginStep.READY)TextButton(onClick={bundle.actions.run{
                 require(state.tasks.none{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}){"Pause transfers before signing out."}
+                bundle.library.context.stopService(android.content.Intent(bundle.library.context,PlaybackService::class.java))
                 bundle.drive.logout()
             };accountSheet=false}){Text("Sign out of this account",color=MaterialTheme.colorScheme.error)}
             Text("Each profile has a separate Telegram session. Switching accounts does not move or share your files.",style=MaterialTheme.typography.bodySmall)
