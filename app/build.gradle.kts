@@ -7,6 +7,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// AGP resource shrinking requires bundle and multi-APK outputs in separate build directories.
+if (providers.gradleProperty("bundleOnly").map(String::toBoolean).getOrElse(false)) {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build/bundle-only"))
+}
+
 val local = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
@@ -24,8 +29,8 @@ android {
         applicationId = "app.tgdrive"
         minSdk = 26
         targetSdk = 36
-        versionCode = setting("APP_VERSION_CODE").ifBlank { "4" }.toInt().also { require(it > 0) }
-        versionName = setting("APP_VERSION_NAME").ifBlank { "0.2.0" }
+        versionCode = setting("APP_VERSION_CODE").ifBlank { "12" }.toInt().also { require(it > 0) }
+        versionName = setting("APP_VERSION_NAME").ifBlank { "0.2.1" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TELEGRAM_API_ID", literal(setting("TELEGRAM_API_ID")))
         buildConfigField("String", "TELEGRAM_API_HASH", literal(setting("TELEGRAM_API_HASH")))
@@ -44,6 +49,15 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasSigning) signingConfig = signingConfigs.getByName("release")
+        }
+    }
+    // Opt in for distribution; ordinary debug/emulator builds retain their current packaging.
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("splitApks").map(String::toBoolean).getOrElse(false)
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
     buildFeatures { compose = true; buildConfig = true }

@@ -1,6 +1,6 @@
 # TG Drive
 
-Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.2.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
+Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.2.1 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
 
 - Multiple uploads, persistent queue, priority, per-file retry/pause, unmetered/charging rules and approximate upload pacing.
 - Nested folders, rename/move, tags, favorites, search/filter, grid/list, trash, content versions and reversible organization rules.
@@ -27,7 +27,7 @@ Set `ANDROID_HOME` or ignored `local.properties` `sdk.dir`. To use Telegram, cre
 
 ## Download and updates
 
-[Release APK workflow](.github/workflows/release-no-secrets.yml) runs the sharing tests and native device smoke suite, then release unit/lint checks and builds APK/AAB artifacts. A push to `main` creates `tg-drive-release`; a version tag or an explicit manual publish creates a GitHub prerelease. It does not upload to Google Play.
+[Release APK workflow](.github/workflows/release-no-secrets.yml) runs the sharing tests and native device smoke suite, then release unit/lint checks, verifies matching payloads across ABI APKs, and checks a signed in-place upgrade on an emulator. APKs, AAB and developer mapping files are separate downloads. A push to `main` creates separate APK artifacts (`tg-drive-arm64-v8a`, `tg-drive-armeabi-v7a`, and universal/Intel fallbacks); a version tag or an explicit manual publish creates a GitHub prerelease. It does not upload to Google Play.
 
 The workflow preserves the existing 0.1.1 signing certificate and rejects a replacement key. Keep a secure backup of the existing key; Actions cache is not durable key management. Debug builds have a different signature and cannot update the workflow APK in place. See [RELEASING](docs/RELEASING.md).
 
