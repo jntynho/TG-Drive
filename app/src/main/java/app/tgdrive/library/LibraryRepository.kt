@@ -68,6 +68,14 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         return vaults.protect(Envelope(kind = kind, entityId = id, parentOperationId = previous?.operationId ?: "", deviceId = deviceId,
             timestamp = maxOf(now(), (previous?.timestamp ?: 0) + 1), vaultId = vault, body = body, tombstone = deleted, resolves = resolves))
     }
+    suspend fun accountSecret(name:String):String? {
+        val account=state.value.accountId;checkAccount(account)
+        return session.secret("account:$account:$name")
+    }
+    suspend fun saveAccountSecret(name:String,value:String) {
+        val account=state.value.accountId;checkAccount(account)
+        session.saveSecret("account:$account:$name",value)
+    }
     fun checkAccount(accountId: Long) { if (state.value.accountId != accountId || !state.value.loaded) throw CancellationException("Account changed") }
     suspend fun mutate(block: (LibraryDatabase) -> Unit) {
         val accountId = state.value.accountId

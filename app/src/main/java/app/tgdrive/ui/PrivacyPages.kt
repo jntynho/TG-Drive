@@ -83,7 +83,7 @@ import java.util.Date
         item{OutlinedTextField(password,{password=it},label={Text("Password · blank keeps existing")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())}
         item{Button(onClick={val p=password;bundle.actions.run{
             if(webdav.isNotBlank())bundle.connections.https(webdav.trim())
-            if(p.isNotEmpty())bundle.drive.saveSecret("webdav-password",p)
+            if(p.isNotEmpty())bundle.library.saveAccountSecret("webdav-password",p)
             bundle.library.updatePreferences{it.copy(webDavUrl=webdav.trim(),webDavUser=user.trim())};bundle.library.notice("WebDAV configuration saved. No file has been exported.")
         };password=""}){Text("Save WebDAV settings")}}
         item{TextButton(onClick={bundle.actions.run{bundle.connections.testWebDav()}},enabled=state.preferences.webDavUrl.isNotBlank()){Text("Test saved WebDAV connection")}}
@@ -92,7 +92,7 @@ import java.util.Date
         item{OutlinedTextField(token,{token=it},label={Text("Owner token · blank keeps existing")},singleLine=true,visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth())}
         item{Button(onClick={val t=token;bundle.actions.run{
             if(server.isNotBlank())bundle.connections.https(server.trim())
-            if(t.isNotEmpty()){require(t.length>=32&&t.none{it.isISOControl()}){"The owner token needs at least 32 characters without control characters."};bundle.drive.saveSecret("sharing-token",t)}
+            if(t.isNotEmpty()){require(t.length>=32&&t.none{it.isISOControl()}){"The owner token needs at least 32 characters without control characters."};bundle.library.saveAccountSecret("sharing-token",t)}
             bundle.library.updatePreferences{it.copy(sharingUrl=server.trim())};bundle.library.notice("Sharing endpoint saved. A link is only created when you explicitly export a file.")
         };token=""}){Text("Save sharing settings")}}
         item{InfoCard("Self-hosted component included","The repository's sharing-server folder contains the service, tests and HTTPS proxy example. It stores explicit exported copies, never Telegram login sessions. Configuring a URL does not deploy a server.")}

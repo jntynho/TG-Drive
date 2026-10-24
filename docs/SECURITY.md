@@ -4,7 +4,7 @@ TG Drive is an independent Telegram API client. Normal files go through on-devic
 
 ## Local protection and accounts
 
-TDLib database keys, API settings and optional service credentials use profile-specific Android Keystore protection. Library row payloads use account-specific AES-GCM keys with table/row associated data; IDs and entity kinds remain queryable. Queues and source URIs are private. Original 0.1.1 session paths are retained. Additional accounts have independent TDLib directories/settings and account-scoped databases/caches. Duplicate profiles for the same Telegram user are refused.
+TDLib database keys, API settings and optional service credentials use Android Keystore protection. Service credentials and queued connection snapshots are additionally namespaced by Telegram user ID, so signing another user into the same local profile cannot reuse the previous user’s connection secrets. Library row payloads use account-specific AES-GCM keys with table/row associated data; IDs and entity kinds remain queryable. Queues and source URIs are private. Original 0.1.1 session paths are retained. Additional accounts have independent TDLib directories/settings and account-scoped databases/caches. Duplicate profiles for the same Telegram user are refused.
 
 App lock uses device credentials/strong biometrics after 30 seconds away. It controls the UI/document provider; upload-only work on ordinary files may continue. Vault work is paused and vaults locked when background locking runs. Protected playback stops on explicit lock. Notifications hide details by default and always hide vault filenames. Root/device compromise, memory forensics and copies already exported to another app are outside these protections.
 

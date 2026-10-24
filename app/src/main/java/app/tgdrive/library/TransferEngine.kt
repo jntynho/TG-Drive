@@ -76,7 +76,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val task = TransferTask(kind = kind, title = item.name, itemId = item.id, destination = destination?.toString() ?: "",
             total = item.size, vaultId = if(kind==TaskKind.EXPORT)payload.model<List<String>>().map{repository.itemVault(it)}.firstOrNull{it.isNotEmpty()}.orEmpty() else repository.itemVault(item.id), accountId = repository.state.value.accountId,
             profileId = repository.session.profileId, versionId = item.versionId, payload = payload)
-        if(kind==TaskKind.SHARE)repository.session.saveSecret("share-password:${task.id}",sharePassword?:"")
+        if(kind==TaskKind.SHARE)repository.saveAccountSecret("share-password:${task.id}",sharePassword?:"")
         if (kind == TaskKind.WEBDAV || kind == TaskKind.SHARE) OptionalConnections(repository).bind(task)
         repository.setTask(task)
         wake?.invoke()

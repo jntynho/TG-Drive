@@ -24,17 +24,17 @@ class OptionalConnections(private val repository: LibraryRepository) {
     }
     suspend fun bind(task:TransferTask) {
         val prefs=repository.state.value.preferences
-        val binding=if(task.kind==TaskKind.WEBDAV)ConnectionBinding(https(prefs.webDavUrl).toString(),prefs.webDavUser,repository.session.secret("webdav-password").orEmpty())
-            else ConnectionBinding(https(prefs.sharingUrl).toString(),token=repository.session.secret("sharing-token").orEmpty())
-        repository.session.saveSecret("connection:${task.id}",binding.json())
+        val binding=if(task.kind==TaskKind.WEBDAV)ConnectionBinding(https(prefs.webDavUrl).toString(),prefs.webDavUser,repository.accountSecret("webdav-password").orEmpty())
+            else ConnectionBinding(https(prefs.sharingUrl).toString(),token=repository.accountSecret("sharing-token").orEmpty())
+        repository.saveAccountSecret("connection:${task.id}",binding.json())
     }
     suspend fun forget(task:TransferTask) {
-        repository.session.saveSecret("connection:${task.id}","");repository.session.saveSecret("share-password:${task.id}","")
+        repository.saveAccountSecret("connection:${task.id}","");repository.saveAccountSecret("share-password:${task.id}","")
     }
     suspend fun execute(task:TransferTask)=withContext(Dispatchers.IO) {
         val version=repository.version(task.versionId)
         val item=repository.item(task.itemId).copy(versionId=version.id,size=version.size,sha256=version.sha256)
-        val binding=repository.session.secret("connection:${task.id}")?.takeIf{it.isNotEmpty()}?.model<ConnectionBinding>()?:error("Recreate this export to bind its destination settings.")
+        val binding=repository.accountSecret("connection:${task.id}")?.takeIf{it.isNotEmpty()}?.model<ConnectionBinding>()?:error("Recreate this export to bind its destination settings.")
         val file=repository.cache!!.materialize(item,version,task.vaultId)
         repository.checkAccount(task.accountId)
         repository.setTask(task.copy(state=TaskState.TRANSFERRING,error=""))
@@ -61,7 +61,7 @@ class OptionalConnections(private val repository: LibraryRepository) {
             TaskKind.SHARE -> {
                 require(binding.token.length>=32){"Enter the sharing server's owner token in Settings."}
                 val endpoint=https(binding.endpoint).newBuilder().addPathSegments("api/shares").build()
-                val spec=task.payload.model<ShareOptions>();val password=repository.session.secret("share-password:${task.id}").orEmpty()
+                val spec=task.payload.model<ShareOptions>();val password=repository.accountSecret("share-password:${task.id}").orEmpty()
                 val request=Request.Builder().url(endpoint).header("Authorization","Bearer ${binding.token}")
                     .header("X-File-Name",Base64.getUrlEncoder().withoutPadding().encodeToString(item.name.toByteArray()))
                     .header("X-Share-Expires-In",spec.hours.coerceIn(1,168).times(3600).toString())
@@ -77,22 +77,22 @@ class OptionalConnections(private val repository: LibraryRepository) {
                 }
                 repository.checkAccount(task.accountId)
                 repository.mutate{it.put("settings","share:${result.id}",result.json())}
-                repository.session.saveSecret("share-owner:${result.id}",binding.json());repository.shareResult(result)
+                repository.saveAccountSecret("share-owner:${result.id}",binding.json());repository.shareResult(result)
             }
             else -> error("Unsupported optional connection")
         }
     }
     suspend fun revoke(id:String) {
         require(id.matches(Regex("[A-Za-z0-9_-]{32,80}")))
-        val binding=repository.session.secret("share-owner:$id")?.takeIf{it.isNotEmpty()}?.model<ConnectionBinding>()?:error("The original sharing connection is required to revoke this link.")
+        val binding=repository.accountSecret("share-owner:$id")?.takeIf{it.isNotEmpty()}?.model<ConnectionBinding>()?:error("The original sharing connection is required to revoke this link.")
         val url=https(binding.endpoint).newBuilder().addPathSegments("api/shares").addPathSegment(id).build()
         exchange(Request.Builder().url(url).header("Authorization","Bearer ${binding.token}").delete().build()){response,_->require(response.isSuccessful){"Could not revoke this link (${response.code})."}}
-        repository.mutate{it.remove("settings","share:$id")};repository.session.saveSecret("share-owner:$id","")
+        repository.mutate{it.remove("settings","share:$id")};repository.saveAccountSecret("share-owner:$id","")
         repository.notice("Future access revoked. Already downloaded copies cannot be recalled.")
     }
     suspend fun testWebDav() {
         val prefs=repository.state.value.preferences;val url=https(prefs.webDavUrl)
-        val auth=Credentials.basic(prefs.webDavUser,repository.session.secret("webdav-password").orEmpty(),Charsets.UTF_8)
+        val auth=Credentials.basic(prefs.webDavUser,repository.accountSecret("webdav-password").orEmpty(),Charsets.UTF_8)
         exchange(Request.Builder().url(url).header("Authorization",auth).header("Depth","0").method("PROPFIND",byteArrayOf().toRequestBody()).build()){response,_->require(response.code in setOf(200,207)){"WebDAV connection failed (${response.code}). Check final endpoint and credentials."}}
         repository.notice("WebDAV endpoint responded successfully. No file was uploaded.")
     }

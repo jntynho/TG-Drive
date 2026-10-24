@@ -29,7 +29,7 @@ class TransferIntegrationTest {
     @Before fun prepare() {
         dispatcher=newSingleThreadContext("library-main");Dispatchers.setMain(dispatcher)
         scope=CoroutineScope(SupervisorJob()+dispatcher)
-        context.deleteDatabase("library-v2-1701.db")
+        context.deleteDatabase("library-v2-1701.db");context.deleteDatabase("library-v2-1702.db")
         File(context.filesDir,"index-1701.json").delete()
         File(context.cacheDir,"library/1701").deleteRecursively()
         File(context.filesDir,"offline/1701").deleteRecursively()
@@ -101,11 +101,11 @@ class TransferIntegrationTest {
     }
     @Test fun `changed destination settings do not redirect a queued export`()=runBlocking {
         open();repo.setPreferences(repo.state.value.preferences.copy(webDavUrl="https://original.example/dav",webDavUser="user"))
-        drive.saveSecret("webdav-password","test-only-password")
+        repo.saveAccountSecret("webdav-password","test-only-password")
         val item=Item(name="x",versionId="version");repo.saveUploaded(item,Version(id=item.versionId,itemId=item.id,size=0,sha256="",parts=emptyList()),"","")
         val id=engine.enqueue(TaskKind.WEBDAV,item)
         repo.updatePreferences{it.copy(webDavUrl="https://different.example/")}
-        val binding=drive.secret("connection:$id")!!
+        val binding=repo.accountSecret("connection:$id")!!
         assertTrue(binding.contains("original.example"));assertFalse(binding.contains("different.example"))
     }
     @Test fun `permanent delete refuses a live transfer and preserves the original`()=runBlocking {
@@ -226,6 +226,20 @@ class TransferIntegrationTest {
         assertTrue(runCatching{LibraryActions(repo,engine).validateLocalDeletion(listOf(item.id))}.isFailure)
         assertEquals("original",File(uri.path!!).readText())
     }
+    @Test fun `connection credentials stay with their Telegram user when a profile signs in to another account`()=runBlocking {
+        open();repo.saveAccountSecret("webdav-password","first-account-password")
+        repo.saveAccountSecret("sharing-token","first-account-owner-token")
+        suspend fun switchTo(id:Long) {
+            wire.userId=id;wire.update!!(TdApi.UpdateAuthorizationState(TdApi.AuthorizationStateReady()))
+            withTimeout(5_000){while(repo.state.value.accountId!=id||!repo.state.value.loaded)delay(5)}
+        }
+        switchTo(1702)
+        assertNull(repo.accountSecret("webdav-password"));assertNull(repo.accountSecret("sharing-token"))
+        repo.saveAccountSecret("webdav-password","second-account-password")
+        switchTo(1701)
+        assertEquals("first-account-password",repo.accountSecret("webdav-password"))
+        assertEquals("first-account-owner-token",repo.accountSecret("sharing-token"))
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]
@@ -234,7 +248,7 @@ class TransferIntegrationTest {
     }
     private class Wire(val directory:File):TdConnectionFactory {
         @Volatile var update:((TdApi.Object)->Unit)?=null
-        var next=100L;var failPart:Int?=null;var stall=false;var stallDownload=false
+        var userId=1701L;var next=100L;var failPart:Int?=null;var stall=false;var stallDownload=false
         @Volatile var downloading=false
         val cancelledDownloads=mutableListOf<Int>()
         val messages=mutableMapOf<Long,TdApi.Message>();val files=mutableMapOf<Int,TdApi.File>()
@@ -245,8 +259,8 @@ class TransferIntegrationTest {
                 if(function is TdApi.DownloadFile&&stallDownload){downloading=true;return}
                 if(stall&&function is TdApi.SendMessage&&function.inputMessageContent is TdApi.InputMessageDocument)return
                 val answer:TdApi.Object=when(function){
-                    is TdApi.GetMe->TdApi.User().apply{id=1701;firstName="Test"}
-                    is TdApi.CreatePrivateChat->TdApi.Chat().apply{id=1701}
+                    is TdApi.GetMe->TdApi.User().apply{id=this@Wire.userId;firstName="Test"}
+                    is TdApi.CreatePrivateChat->TdApi.Chat().apply{id=this@Wire.userId}
                     is TdApi.GetChatHistory->TdApi.Messages().apply{messages=if(function.fromMessageId==0L)history.toTypedArray() else emptyArray()}
                     is TdApi.GetMessage->messages[function.messageId]?:TdApi.Error(404,"message not found")
                     is TdApi.DownloadFile->files[function.fileId]!!
