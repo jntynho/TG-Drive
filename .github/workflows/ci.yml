@@ -27,14 +27,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Validate, test and build
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: check-reports
           path: |
             app/build/reports/
             app/build/test-results/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tg-drive-debug
           path: app/build/outputs/apk/debug/*.apk
@@ -51,7 +51,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: ./gradlew --no-daemon connectedDebugAndroidTest
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: device-test-reports
