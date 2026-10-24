@@ -231,8 +231,8 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
             } ?: error("Source permission is unavailable. Select the file again.")
             val hash = digest.digest().joinToString("") { "%02x".format(it) }
             require(current.sourceSha256.isEmpty() || hash == current.sourceSha256) { "Source content changed since the interrupted upload. Start a new upload." }
-            val duplicate = repository.state.value.items.firstOrNull { it.sha256 == hash && repository.itemVault(it.id) == current.vaultId && (it.deletedAt == 0L || current.ruleId.isNotEmpty()) }
-            if (!current.allowDuplicate && repository.state.value.preferences.detectDuplicates && duplicate != null && duplicate.id != current.itemId) {
+            val duplicate = repository.state.value.items.firstOrNull { it.sha256 == hash && repository.itemVault(it.id) == current.vaultId && it.deletedAt == 0L && it.versionId.isNotEmpty() && repository.state.value.versions.any { version -> version.id == it.versionId && version.itemId == it.id } }
+            if (!current.allowDuplicate && repository.state.value.preferences.detectDuplicates && duplicate != null && duplicate.id != current.itemId && usableDuplicate(duplicate)) {
                 repository.setTask(current.copy(state = TaskState.COMPLETED, itemId = duplicate.id, sourceSha256 = hash, total = length, done = length, error = "Identical content was already backed up; no duplicate was uploaded."))
                 return@withContext
             }
@@ -326,6 +326,21 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         if (previous?.versionId != version.id) repository.saveUploaded(item, version, current.vaultId, current.source, current.accountId)
         repository.flush()
         directory.deleteRecursively()
+    }
+    private suspend fun usableDuplicate(item:Item):Boolean {
+        val local=repository.db().local(item.id)
+        if(local.missing)return false
+        for(part in repository.version(item.versionId).parts) {
+            try {
+                if(repository.remote.document(part.messageId).document.document.size!=part.storedSize){repository.setLocal(local.copy(missing=true));return false}
+            } catch(e:CancellationException){throw e}
+            catch(e:Exception){
+                // A network failure is inconclusive, never a successful duplicate backup.
+                if(Regex("not[ _]found|MESSAGE_ID_INVALID",RegexOption.IGNORE_CASE).containsMatchIn(e.message.orEmpty())){repository.setLocal(local.copy(missing=true));return false}
+                throw e
+            }
+        }
+        return true
     }
     private suspend fun download(initial: TransferTask) = withContext(Dispatchers.IO) {
         val item = repository.item(initial.itemId); val version = repository.version(initial.versionId)

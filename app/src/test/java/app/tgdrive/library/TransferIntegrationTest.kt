@@ -185,6 +185,37 @@ class TransferIntegrationTest {
         assertEquals(TaskState.PAUSED,engine.task(id).state)
         assertTrue(wire.cancelledDownloads.contains(repo.version(item.versionId).parts.single().messageId.toInt()))
     }
+    @Test fun `backup duplicate detection does not treat a trashed version as a live backup`()=runBlocking {
+        open();val bytes="backup bytes".toByteArray()
+        engine.enqueueUpload(listOf(source(bytes,"original.bin")));engine.drain(20_000)
+        val original=repo.state.value.items.single();LibraryActions(repo,engine).trash(listOf(original.id))
+        engine.enqueueUpload(listOf(source(bytes,"new-source.bin")),ruleId="backup-rule");engine.drain(20_000)
+        val result=repo.state.value.tasks.last()
+        assertEquals(TaskState.COMPLETED,result.state);assertNotEquals(original.id,result.itemId)
+        assertEquals(2,wire.uploadedIndices.size);assertEquals(0L,repo.item(result.itemId).deletedAt)
+    }
+    @Test fun `purged content cannot cause a later source to be falsely marked backed up`()=runBlocking {
+        open();val bytes="purge backup".toByteArray()
+        engine.enqueueUpload(listOf(source(bytes,"removed.bin")));engine.drain(20_000)
+        val original=repo.state.value.items.single();val actions=LibraryActions(repo,engine)
+        actions.trash(listOf(original.id));actions.purge(listOf(original.id))
+        assertEquals("",repo.item(original.id).sha256)
+        engine.enqueueUpload(listOf(source(bytes,"different-source.bin")),ruleId="backup-rule");engine.drain(20_000)
+        val result=repo.state.value.tasks.last();assertNotEquals(original.id,result.itemId)
+        assertEquals(2,wire.uploadedIndices.size)
+        val restored=repo.cache!!.materialize(repo.item(result.itemId),repo.version(repo.item(result.itemId).versionId),"")
+        assertArrayEquals(bytes,restored.readBytes())
+    }
+    @Test fun `missing remote messages cannot cause false duplicate completion`()=runBlocking {
+        open();val bytes="missing duplicate".toByteArray()
+        engine.enqueueUpload(listOf(source(bytes,"missing.bin")));engine.drain(20_000)
+        val original=repo.state.value.items.single()
+        repo.version(original.versionId).parts.forEach{wire.messages.remove(it.messageId)}
+        engine.enqueueUpload(listOf(source(bytes,"replacement-source.bin")));engine.drain(20_000)
+        val result=repo.state.value.tasks.last()
+        assertEquals(TaskState.COMPLETED,result.state);assertNotEquals(original.id,result.itemId)
+        assertTrue(repo.db().local(original.id).missing);assertEquals(2,wire.uploadedIndices.size)
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]

@@ -45,7 +45,7 @@ class LibraryActions(val repository: LibraryRepository, val transfers: TransferE
                 db.entries("sources").filter { row -> versions.any { row.first.startsWith("cloud-part:${it.id}:") || row.first=="cloud-thumb:${it.id}" } }.forEach { db.remove("sources",it.first) }
             }
             repository.forgetVersions(versions)
-            repository.updateItem(item.copy(name = "Deleted file", size = 0, versionId = "", tags = emptyList(), favorite = false))
+            repository.updateItem(item.copy(name = "Deleted file", sha256 = "", size = 0, versionId = "", tags = emptyList(), favorite = false))
             repository.mutate { db -> db.remove("local", id) }
             versions.forEach { repository.cache?.removeVersion(it.id) }
         }

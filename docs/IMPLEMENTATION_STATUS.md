@@ -11,7 +11,7 @@ Scope follows the 34-item research report. Desktop/web client (#27) and Arabic U
 | 5 Index recovery | Versioned JSON export/import, cloud checkpoints and legacy migration | Metadata backup is separate from content; only matching accounts merge |
 | 6 Integrity | Original/part SHA-256, full downloaded hash before verification | Legacy imports lack an original hash; streaming does not verify a whole file |
 | 7 Trash | Restore, explicit permanent deletion, retention cleanup | Cleanup runs with eligible work, not a guaranteed server-side timer; imported originals are deleted on purge too |
-| 8 Duplicates | Content-hash skip in the same encryption space; explicit replacement versions | Full source hashing takes I/O; explicit rescans can request extra copies |
+| 8 Duplicates | Content-hash skip for an active version in the same encryption space, with a remote-reference preflight; explicit replacement versions | Full source hashing takes I/O; explicit rescans can request extra copies |
 | 9 Storage | App cache/offline counts, soft budget with active leases, safe cache clearing, native cache inspection | TDLib cache and retained upload sources are separate; no automatic deletion of a sole original |
 | 10 Folders | Nested folders, rename/move, cycle and vault checks | Moving a folder does not re-encrypt content; remove empty folders only |
 | 11 Search | Name/tags/local OCR, type/size/date filters, favorites, sorting | OCR index is local; protected items require unlock |

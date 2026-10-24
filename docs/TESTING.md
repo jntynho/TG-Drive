@@ -10,7 +10,7 @@ npm test --prefix sharing-server
 python3 scripts/check_native_alignment.py app/build/outputs/apk/release/*.apk
 ```
 
-Unit tests include the actual repository, SQLite database, queue and cache with a fake TDLib transport: multipart upload/restore byte comparison, interrupted retry without re-sending completed parts, changed source rejection, duplicate identity/hash preservation, legacy migration, invalid metadata isolation, destination binding, active-delete refusal, corrupted-download rejection, cache leases/offline pins, stale checkpoint tombstones, encrypted multipart recovery, priority, pacing and bounded native-request deadlines. Separate tests cover crypto context/truncation/recovery, operation conflicts, transaction rollback, Unicode/path validation and authentication ordering/errors/timeouts. No unit test signs in to a real Telegram account.
+Unit tests include the actual repository, SQLite database, queue and cache with a fake TDLib transport: multipart upload/restore byte comparison, interrupted retry without re-sending completed parts, changed source rejection, duplicate identity/hash preservation, rejection of trashed/purged/missing duplicate references, legacy migration, invalid metadata isolation, destination binding, active-delete refusal, corrupted-download rejection, cache leases/offline pins, stale checkpoint tombstones, encrypted multipart recovery, priority, pacing and bounded native-request deadlines. Separate tests cover crypto context/truncation/recovery, operation conflicts, transaction rollback, Unicode/path validation and authentication ordering/errors/timeouts. No unit test signs in to a real Telegram account.
 
 The device suite expects English. It tests native TDLib loading/execution, authentication privacy/error controls, explicit delete cancellation in the legacy view, actual MainActivity startup/account sheet, native grid action separation, and accessible selection/long press. It does not exercise an authenticated cloud library. CI requires this suite on a KVM emulator before the signed build job.
 
@@ -46,10 +46,12 @@ Production distribution also requires independent crypto/native dependency revie
 
 ## Local validation evidence (2026-10-24)
 
-- Debug and Release each executed **56 unit/integration tests**, zero failures/errors. The 17 queue/repository integration cases use a fake Telegram transport, not a live account.
+- Debug and Release each executed **59 unit/integration tests**, zero failures/errors. The 20 queue/repository integration cases use a fake Telegram transport, not a live account.
 - Debug/Release lint: zero errors; 21 warnings (including dependency notices and API/style suggestions). Warnings were not disabled to obtain a pass.
 - Debug APK, instrumentation APK, minified unsigned Release APK and unsigned Release AAB built locally with JDK 21/SDK 36. Local unsigned artifacts cannot update the signed workflow application in place.
 - Twelve packaged native libraries passed ELF alignment: 16 KB on 64-bit ABIs and 4 KB on 32-bit ABIs. ZIP alignment and actionlint are checked separately.
 - Optional sharing server: six tests passed, zero skipped/failures.
 - The public 0.1.1 APK signature was verified and its certificate fingerprint was pinned for update continuity. This is not a physical-device upgrade test.
 - Local device/account/service acceptance limitations above remain in force. Consult the GitHub Actions run for execution of the new emulator suite and signed artifact generation.
+
+The native device suite also passed on GitHub's accelerated Android 30 emulator in [run 40121518708](https://github.com/jntynho/TG-Drive/actions/runs/40121518708/job/120953907829). This verifies the checked-in smoke scope; it does not establish authenticated account or physical-device acceptance. The older deletion test activates the accessible overflow action; separate native file-card cases exercise physical taps and long press.
