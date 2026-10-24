@@ -11,6 +11,8 @@
 
 The default `GITHUB_TOKEN` must be permitted to create releases by the repository/organization policy. No personal token is needed. Protect tag creation and keep signing secrets restricted to trusted maintainers.
 
+Both workflows run the offline native-library/UI device suite on a KVM-accelerated Android emulator. The release job must pass those checks before its artifact is published. These tests do not replace authenticated Telegram acceptance tests. Debug and release use the same application ID with different signing identities; uninstall a debug build before installing a production-signed build if Android reports a signature conflict. Local data is removed on uninstall; uploaded Telegram documents remain in your account.
+
 ## Required repository secrets for signed releases
 
 Configure Settings → Secrets and variables → Actions:

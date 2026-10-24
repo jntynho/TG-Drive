@@ -22,3 +22,14 @@ The connected smoke suite expects an English-language device/emulator. It verifi
 8. Test Arabic RTL, dark theme, large font sizes, API 26 and modern Android devices including a 16 KB page-size device. Confirm release JNI survives R8.
 
 Do not use irreplaceable personal data. Never delete a real user's files for testing. Public release also needs a current Telegram API terms review and Google Play policy/privacy review.
+
+## Development validation — 2026-10-24
+
+- Final debug and release unit runs: **12 tests passed per variant**, zero failures/errors.
+- Debug and release lint: **zero errors**, three nonblocking warnings per variant (two newer-library notices and an optional KTX-style suggestion).
+- Built debug APK, minified unsigned release APK and unsigned release AAB using the checked-in wrapper, JDK 21 and SDK 36.
+- APK ZIP alignment passed. ELF checks passed for all eight packaged native libraries, requiring 16 KB LOAD alignment on 64-bit ABIs and 4 KB on 32-bit ABIs.
+- Both Actions workflow files passed actionlint 1.7.7.
+- Local device tests **did not execute**: no KVM device is available; the software-emulated Android 30 guest booted slowly, then its system server died before app installation (`DeadSystemException`, followed by missing package service). Gradle device discovery and direct ADB installation both failed at environment setup. This does not establish a pass or an application assertion failure. CI and release workflows run the device suite on accelerated GitHub runners and must pass before release.
+- Authenticated Telegram login, upload/download byte comparison and multi-device recovery remain **unrun** because Telegram API credentials/test-account authentication were not provided. Do not infer those capabilities have passed from a successful APK build.
+- GitHub Actions execution status could not be read through this environment's API networking. Local actionlint validation is distinct from a successful GitHub run.
