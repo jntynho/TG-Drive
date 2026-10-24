@@ -1,38 +1,42 @@
-# Building and releasing
+# Building and releasing 0.2.0
 
-## Current GitHub workflow
+## GitHub Actions
 
-The repository currently uses `.github/workflows/release-no-secrets.yml`, named **Release APK (no secrets)**. It was added separately from the original workflows; the connection fix preserves its existing signing-key path, cache key and alias so builds can update installed test APKs when the same cached key is restored.
+[release-no-secrets.yml](../.github/workflows/release-no-secrets.yml), **Release APK (no secrets)**:
 
-- **Push to main**: run release unit tests and lint, build and verify a signed test APK, upload `tg-drive-release`. This does not create a GitHub release.
-- **Actions → Release APK (no secrets) → Run workflow**: select version `0.1.1` (or the next version), and set `publish` to control GitHub prerelease creation.
-- **Push a version tag**: use the tag version and create a GitHub prerelease after successful validation/build.
+1. Optional sharing service tests on Node 24 and native device tests on an accelerated Android 30 x86_64 emulator. No account credentials are used.
+2. Release unit tests, lint, R8/shrunk APK and AAB build.
+3. Existing signature verification, ZIP and ELF alignment checks.
+4. Upload `tg-drive-release` with APK/AAB, R8 mapping and SHA-256 checksums; validation/device reports have separate artifacts.
 
-Artifacts contain the APK, R8 mapping and SHA-256 checksums. `validation-reports` contains the unit/lint reports. There is no Google Play upload. Building an AAB locally remains supported with `./gradlew bundleRelease`, but the current workflow distributes an APK only.
+Push to `main` builds artifacts. A `v…` tag or workflow dispatch with `publish=true` creates a GitHub prerelease. Default manual version is `0.2.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
 
-Telegram application credentials are not required for the build: the installed app asks for API ID/hash. They can optionally be supplied as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to Gradle through the environment or ignored `local.properties`. They are application credentials, not a bot token, login code or user-session key. Anything embedded in an APK is extractable.
+## Existing signing identity
 
-## Signing and updates
+The verified public [0.1.1 APK](https://github.com/jntynho/TG-Drive/releases/tag/v0.1.1) has certificate SHA-256:
 
-The current no-secrets workflow generates a sideload test key on its first run and reuses `~/.tgdrive-signing` from cache `tgdrive-sideload-signing-key-v1`. **Do not change/delete that key merely to fix Telegram initialization.** Changing signing identity prevents an in-place Android update. Cache retention is not guaranteed; cache-only key storage is unsuitable as the sole backup for production signing. The workflow's shared test password is not a production security boundary.
-
-For a real production/upload key, use a backed-up keystore and repository secrets. Gradle already supports `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`. Migrate the workflow deliberately and account for installed users' signing identity; do not silently replace their signing key.
-
-A local signed build uses:
-
-```bash
-./gradlew testReleaseUnitTest lintRelease assembleRelease bundleRelease
-python3 scripts/check_native_alignment.py app/build/outputs/apk/release/*.apk
-"$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 4 app/build/outputs/apk/release/app-release.apk
-"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+```text
+bea43fa8797f48dbd55717f34454af1836167da85d9fe47445190a6561af3f9d
 ```
 
-Without signing settings, local release APK/AAB builds remain unsigned. Debug APKs use the debug signing identity and cannot directly update the separately signed workflow APK. For the reported connection bug, use the current workflow's new APK rather than uninstalling the old app to switch signing identities.
+The value is pinned in `scripts/sideload-cert-sha256.txt`. It is public certificate information, not a signing key. The workflow retains cache `tgdrive-sideload-signing-key-v1`, path `~/.tgdrive-signing/release.jks`, alias `tgdrive`. It refuses to silently generate a different identity when cache is missing. An update must retain the signature, application ID and data paths to preserve installed sessions/indexes.
 
-`APP_VERSION_NAME` and `APP_VERSION_CODE` can override Gradle defaults. The workflow uses its run number for versionCode; keep codes monotonic when migrating workflows. Retain mapping.txt for each distributed version.
+**Cache is not a durable keystore backup.** Securely back up the existing key. To restore the **same** identity from a backup, configure repository secrets `RELEASE_KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`. Secret-based recovery is optional while cache is valid. The APK fingerprint check also applies to a restored key. Do not invent a new key to make the check pass. A new distribution/signature is a deliberate separate migration and cannot update existing installs normally.
 
-## Validation boundaries
+Gradle accepts `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` locally. Without all four, local release APK/AAB are unsigned. Debug signing differs from the workflow key; do not uninstall a user's existing application merely to install a debug build.
 
-Unit tests cover reordered auth callbacks, timeouts and recovery through a fake transport, without account credentials or Telegram network access. They do not prove real account login, SMS delivery, or transfer success. Device smoke tests are checked in but are not run by the current no-secrets workflow. Run them on an accelerated emulator or physical test device, plus authenticated acceptance checks in TESTING.md, before public production distribution.
+## Application API credentials
 
-The local APK ZIP/native alignment checks do not establish store approval or native binary provenance. Review SECURITY.md, current Telegram API terms and Google Play policy before distribution beyond testing.
+No Telegram developer credentials were supplied for this change. The app therefore retains manual API ID/hash setup. A distributor with an authorized Telegram application may supply `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to the build through secure environment bindings or ignored `local.properties`; users then begin with a phone number. These are extractable application identifiers in the APK, not user sessions. SMS delivery and additional Telegram authentication steps are not guaranteed by the app.
+
+## Local validation
+
+```sh
+./gradlew --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+./gradlew --max-workers=2 testReleaseUnitTest lintRelease assembleRelease bundleRelease
+npm test --prefix sharing-server
+python3 scripts/check_native_alignment.py app/build/outputs/apk/release/*.apk
+"$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 4 app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+For signed output, also run `apksigner verify --verbose --print-certs`. Run `connectedDebugAndroidTest` on a connected emulator/phone. Fake-wire tests and native device smoke tests do not prove authenticated Telegram transfer, upgrade data preservation on a real install, multi-device synchronization or store-policy acceptance. See TESTING.md and SECURITY.md before public production distribution.

@@ -12,12 +12,13 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Android backup is disabled: this key and the TDLib database belong to this installation. */
-internal class SecureSettings(context: Context) : SessionSettings {
-    private val prefs = context.getSharedPreferences("secure-settings", Context.MODE_PRIVATE)
+internal class SecureSettings(context: Context, profileId: String = "legacy") : SessionSettings {
+    private val alias = if (profileId == "legacy") ALIAS else "$ALIAS.$profileId"
+    private val prefs = context.getSharedPreferences(if (profileId == "legacy") "secure-settings" else "secure-settings-$profileId", Context.MODE_PRIVATE)
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        return (store.getKey(ALIAS, null) as? SecretKey) ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
-            init(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        return (store.getKey(alias, null) as? SecretKey) ?: KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
+            init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
             generateKey()
         }

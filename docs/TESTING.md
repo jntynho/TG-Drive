@@ -1,44 +1,55 @@
-# Validation and acceptance
+# Validation and acceptance — Android 0.2.0
 
-## Automated
+## Automated workflow
 
-```bash
-./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
-./gradlew testReleaseUnitTest lintRelease assembleRelease bundleRelease
-./gradlew connectedDebugAndroidTest
+```sh
+./gradlew --max-workers=2 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+./gradlew --max-workers=2 testReleaseUnitTest lintRelease assembleRelease bundleRelease
+npm test --prefix sharing-server
+./gradlew --max-workers=2 connectedDebugAndroidTest
+python3 scripts/check_native_alignment.py app/build/outputs/apk/release/*.apk
 ```
 
-The connected smoke suite expects an English-language device/emulator. It verifies loading and executing native TDLib without account credentials, the setup UI/privacy dialog, and cancellation of permanent deletion. It does not substitute for authenticated Telegram testing. The release variant is minified; also install a signed release on a physical device before distributing it.
+Unit tests include the actual repository, SQLite database, queue and cache with a fake TDLib transport: multipart upload/restore byte comparison, interrupted retry without re-sending completed parts, changed source rejection, duplicate identity/hash preservation, legacy migration, invalid metadata isolation, destination binding, active-delete refusal, corrupted-download rejection, cache leases/offline pins, stale checkpoint tombstones, encrypted multipart recovery, priority, pacing and bounded native-request deadlines. Separate tests cover crypto context/truncation/recovery, operation conflicts, transaction rollback, Unicode/path validation and authentication ordering/errors/timeouts. No unit test signs in to a real Telegram account.
 
-## Authenticated manual acceptance (test account only)
+The device suite expects English. It tests native TDLib loading/execution, authentication privacy/error controls, explicit delete cancellation in the legacy view, actual MainActivity startup/account sheet, native grid action separation, and accessible selection/long press. It does not exercise an authenticated cloud library. CI requires this suite on a KVM emulator before the signed build job.
 
-1. Configure a Telegram application and sign in with an existing account. Test invalid code and two-step password errors; confirm correct values are not logged.
-2. Upload known-byte text, image, video, empty and larger files. Download each with the document picker and compare SHA-256 hashes. Test Arabic names and folders.
-3. Force a network interruption during transfer, restore connectivity and inspect status. After a process kill, reopen, wait for Telegram, refresh, then check Saved Messages before deciding to retry.
-4. Rebuild the index after clearing the local index or on another test installation. Verify file IDs, names and nonempty folder membership. Empty folders are deliberately local.
-5. Delete a disposable file through the confirmation dialog. Verify its Saved Message is deleted. Delete a different marked message from the official Telegram app and refresh TG Drive.
-6. Sign out, sign in to another test account, and confirm there are no files or folder names from the first account. Return to the first account and rebuild its index.
-7. Exercise low storage, unavailable document providers, service timeouts and denied notifications. Verify errors do not claim a successful transfer and retry remains possible.
-8. Test Arabic RTL, dark theme, large font sizes, API 26 and modern Android devices including a 16 KB page-size device. Confirm release JNI survives R8.
+The optional sharing server tests owner authentication, path/name validation, exact bytes, password enforcement, expiry, revocation, size/hash rejection, HTML escaping and idempotent upload retries. Loopback HTTP tests do not establish a deployed HTTPS service or production scalability.
 
-Do not use irreplaceable personal data. Never delete a real user's files for testing. Public release also needs a current Telegram API terms review and Google Play policy/privacy review.
+## Actual environment limits
 
-## Development validation — 2026-10-24
+The local cloud machine has no `/dev/kvm`. A previous software-emulated Android 30 guest booted slowly then lost its system server before app installation. Local instrumentation APK compilation is useful, but **local device tests have not executed**; do not report them as passed. Device assertions must be assessed from the current GitHub Actions run or a physical-device run, separately from local compilation.
 
-- Final debug and release unit runs: **12 tests passed per variant**, zero failures/errors.
-- Debug and release lint: **zero errors**, three nonblocking warnings per variant (two newer-library notices and an optional KTX-style suggestion).
-- Built debug APK, minified unsigned release APK and unsigned release AAB using the checked-in wrapper, JDK 21 and SDK 36.
-- APK ZIP alignment passed. ELF checks passed for all eight packaged native libraries, requiring 16 KB LOAD alignment on 64-bit ABIs and 4 KB on 32-bit ABIs.
-- Both Actions workflow files passed actionlint 1.7.7.
-- Local device tests **did not execute**: no KVM device is available; the software-emulated Android 30 guest booted slowly, then its system server died before app installation (`DeadSystemException`, followed by missing package service). Gradle device discovery and direct ADB installation both failed at environment setup. This does not establish a pass or an application assertion failure. CI and release workflows run the device suite on accelerated GitHub runners and must pass before release.
-- Authenticated Telegram login, upload/download byte comparison and multi-device recovery remain **unrun** because Telegram API credentials/test-account authentication were not provided. Do not infer those capabilities have passed from a successful APK build.
-- GitHub Actions execution status could not be read through this environment's API networking. Local actionlint validation is distinct from a successful GitHub run.
+No real Telegram application credentials, account login, phone code, test account, WebDAV endpoint or deployed sharing origin was provided. No authenticated Telegram upload/download, SMS delivery, real two-device recovery, biometrics, actual provider attachment or release-upgrade data migration has been tested on a phone. These are pending acceptance checks, not passes inferred from builds.
 
-## Connection fix validation — 0.1.1, 2026-10-24
+## Physical-device / authenticated acceptance
 
-- Reproduced the reported state regression before the fix: a phone-number update arriving before the parameter request acknowledgement was overwritten with CONNECTING (`expected PHONE but was CONNECTING`).
-- After the fix: **22 unit tests passed in debug and 22 in release**, including 10 transport-boundary auth tests. They cover both response/update orders, parameter rejection, API hash redaction, initialization/request deadlines, late responses, retry without duplicate clients, offline status, native-load failure and non-destructive credential editing with stale-client updates.
-- Debug and minified release APKs, release AAB, and the Android test APK built successfully. Debug/release lint each reported zero errors and four nonblocking warnings (three dependency-update notices and one optional KTX suggestion).
-- The new persistent-error/retry/edit UI has an additional checked-in device smoke test. Device tests were compiled, not executed locally: the previously diagnosed software-emulator/system-server failure is unresolved, and no accelerated emulator/physical device is attached.
-- No real Telegram account, API credentials or login code was used. Actual sign-in, SMS delivery and file-transfer acceptance remain unverified. Do not present the fake-transport tests as a successful Telegram login.
-- The remote main branch's no-secrets workflow was fast-forwarded into this checkout before applying the fix. It is preserved and now runs unit/lint validation before building the new APK. Earlier statements about two workflows and automatic device gates describe the original setup, not this current workflow.
+Use a disposable test account and known-byte files; never irreplaceable personal data.
+
+1. Install the previous signed release, create files/folders and sign in. Update with the new workflow APK without uninstalling. Compare the certificate and verify the session, existing file references and folders survive migration without a content re-upload.
+2. Exercise invalid code/password, network loss, delayed auth callbacks, retry and edit configuration. Confirm no permanent connecting spinner and no secrets in diagnostics/logs. SMS timing is controlled by Telegram.
+3. Upload text/image/video/PDF, empty files, Unicode names and multipart files. Download and compare independent SHA-256 hashes. Confirm originals are sent as documents without recompression.
+4. Pause near a part boundary; cut network; change unmetered/charging state; kill the process; resume and inspect Saved Messages. Confirm completed parts are retained, a pending send is reconciled, active-part restart is stated and failures are not called complete. Test urgency and average pacing bursts.
+5. Create/rename/move nested folders, tags, favorites, filters, selection and trash. Restore a disposable item, then permanently delete it. Check imported-original deletion consent. Merge an old checkpoint and ensure it does not resurrect deleted content automatically.
+6. On two independent test devices, sync folders/metadata, create conflicting offline edits and resolve them. Network/history errors must preserve valid local records; unreadable messages must be reported rather than blocking the entire scan.
+7. Pin files, enable airplane mode, preview and verify them. Clean unpinned cache and confirm pins/source copies remain. Test low storage, revoked input/output grants, unsupported image/PDF and part tampering/truncation.
+8. Scrub audio/video across part boundaries, including encrypted versions; background playback, saved position, codecs and protected locking. Playback startup is not full-file integrity verification.
+9. Configure selected-folder rules, modify a source and compare receipts; revoke the folder grant; remove/re-add the rule; test safety-limit messages, denied notifications and battery restrictions. An unchanged scan is not a new file success.
+10. Create a vault, save the recovery key independently, recover it in another test install, reject wrong password/key and inspect remote captions for encrypted names. Lock during crypto/preview/playback; check for remaining plaintext previews, private task names and notification leaks. Test background/app lock and document provider denial.
+11. Attach a PDF from TG Drive through another application's document picker, cancel a slow read, and verify read-only behavior/account isolation. Incoming shared files must wait for explicit destination approval, including when the app starts locked.
+12. Capture images, apply manual crop/rotation/grayscale, inspect PDF pages, run Latin OCR and correct text. Measure recognition accuracy on known documents. Arabic OCR and automatic edge detection are outside this build.
+13. Review cleanup candidates, rehash local sources, change one original after backup and confirm refusal. Use Android's deletion confirmation; cloud copies must remain.
+14. With separately configured HTTPS test services, export to WebDAV and compare the downloaded hash; create/password/expire/revoke a public copy; interrupt/retry upload; change settings after enqueue and ensure the original destination remains bound. Never send Telegram sessions to the server.
+15. Check API 26 and current Android, 16 KB page-size devices, dark mode, TalkBack, large fonts, long Unicode names and animation responsiveness. Debug-device smoke success does not establish release performance.
+
+Production distribution also requires independent crypto/native dependency review, signing-key backup, current Telegram API terms and Google Play privacy/policy review.
+
+## Local validation evidence (2026-10-24)
+
+- Debug and Release each executed **56 unit/integration tests**, zero failures/errors. The 17 queue/repository integration cases use a fake Telegram transport, not a live account.
+- Debug/Release lint: zero errors; 21 warnings (including dependency notices and API/style suggestions). Warnings were not disabled to obtain a pass.
+- Debug APK, instrumentation APK, minified unsigned Release APK and unsigned Release AAB built locally with JDK 21/SDK 36. Local unsigned artifacts cannot update the signed workflow application in place.
+- Twelve packaged native libraries passed ELF alignment: 16 KB on 64-bit ABIs and 4 KB on 32-bit ABIs. ZIP alignment and actionlint are checked separately.
+- Optional sharing server: six tests passed, zero skipped/failures.
+- The public 0.1.1 APK signature was verified and its certificate fingerprint was pinned for update continuity. This is not a physical-device upgrade test.
+- Local device/account/service acceptance limitations above remain in force. Consult the GitHub Actions run for execution of the new emulator suite and signed artifact generation.

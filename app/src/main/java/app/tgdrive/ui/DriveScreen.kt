@@ -166,7 +166,7 @@ fun DriveScreen(
 }
 
 @Composable
-private fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier) {
+fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier = Modifier) {
     var apiId by remember { mutableStateOf("") }
     var apiHash by remember { mutableStateOf("") }
     var value by remember(state.login) { mutableStateOf("") }

@@ -8,6 +8,8 @@ import app.tgdrive.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
@@ -33,6 +35,7 @@ data class DriveState(
     val progress: Float? = null,
     val authError: String? = null,
     val network: TelegramNetwork = TelegramNetwork.UNKNOWN,
+    val accountId: Long = 0,
 )
 
 class TelegramDrive internal constructor(
@@ -41,11 +44,16 @@ class TelegramDrive internal constructor(
     private val clients: TdConnectionFactory,
     private val scope: CoroutineScope,
     private val timeoutMillis: Long = 30_000,
+    val profileId: String = "legacy",
 ) {
-    constructor(context: Context) : this(context, SecureSettings(context), NativeTdConnectionFactory,
-        CoroutineScope(SupervisorJob() + Dispatchers.Main))
+    constructor(context: Context, profileId: String = "legacy") : this(context, SecureSettings(context, profileId), NativeTdConnectionFactory,
+        CoroutineScope(SupervisorJob() + Dispatchers.Main), profileId = profileId)
     private val mutable = MutableStateFlow(DriveState())
     val state = mutable.asStateFlow()
+    private val eventStream = MutableSharedFlow<TdApi.Object>(extraBufferCapacity = 256, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val events = eventStream.asSharedFlow()
+    var libraryManaged = false
+    val savedMessagesId get() = chatId
     private var client: TdConnection? = null
     private var apiId = 0
     private var apiHash = ""
@@ -78,11 +86,11 @@ class TelegramDrive internal constructor(
                 }
             }
         }
-        runCatching {
+        scope.launch { runCatching {
             val id = secure.get("api-id") ?: BuildConfig.TELEGRAM_API_ID
             val hash = secure.get("api-hash") ?: BuildConfig.TELEGRAM_API_HASH
             if (id.toIntOrNull() != null && hash.matches(Regex("[a-fA-F0-9]{32}"))) connect(id.toInt(), hash)
-        }.onFailure { connectionFailed("Could not open local secure settings. You can review your API configuration.") }
+        }.onFailure { connectionFailed("Could not open local secure settings. You can review your API configuration.") } }
     }
 
     fun configure(id: String, hash: String) {
@@ -142,6 +150,7 @@ class TelegramDrive internal constructor(
     private suspend fun request(function: TdApi.Function<*>, timeout: Long = timeoutMillis): TdApi.Object = try {
         withTimeout(timeout) { sendRequest(function) }
     } catch (_: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive() // Preserve a worker/service deadline from its parent.
         error("Telegram did not respond in time. Check connectivity before retrying. A pending sign-in request may still complete.")
     }
 
@@ -150,13 +159,14 @@ class TelegramDrive internal constructor(
         if (td == null) { c.resumeWithException(IllegalStateException("Telegram is not connected.")); return@suspendCancellableCoroutine }
         td.send(function) { result ->
             if (c.isActive) {
-                if (result is TdApi.Error) c.resumeWithException(IllegalStateException(readableError(result)))
+                if (result is TdApi.Error) c.resumeWithException(IllegalStateException(safeReason(readableError(result))))
                 else c.resume(result)
             }
         }
     }
 
     private suspend fun onUpdate(update: TdApi.Object) {
+        eventStream.tryEmit(update)
         when (update) {
             is TdApi.UpdateAuthorizationState -> authorization(update.authorizationState)
             is TdApi.UpdateConnectionState -> mutable.update { it.copy(network = when (update.state) {
@@ -171,12 +181,12 @@ class TelegramDrive internal constructor(
                 upsert(update.message)
                 val waiter = sent.remove(update.oldMessageId)
                 if (waiter != null) waiter.complete(update.message)
-                else if (metadata(update.message) != null) earlyResults[update.oldMessageId] = Result.success(update.message)
+                else if (update.message.chatId == chatId) earlyResults[update.oldMessageId] = Result.success(update.message)
             }
             is TdApi.UpdateMessageSendFailed -> {
                 val error = IllegalStateException(readableError(update.error))
                 sent.remove(update.oldMessageId)?.completeExceptionally(error)
-                    ?: run { if (metadata(update.message) != null) earlyResults[update.oldMessageId] = Result.failure(error) }
+                    ?: run { if (update.message.chatId == chatId) earlyResults[update.oldMessageId] = Result.failure(error) }
             }
             is TdApi.UpdateNewMessage -> if (update.message.sendingState == null) upsert(update.message)
             is TdApi.UpdateDeleteMessages -> if (update.chatId == chatId && update.isPermanent) {
@@ -209,8 +219,8 @@ class TelegramDrive internal constructor(
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
                 try {
                     request(TdApi.SetTdlibParameters().apply {
-                        databaseDirectory = File(context.noBackupFilesDir, "telegram-db").absolutePath
-                        filesDirectory = File(context.filesDir, "telegram-files").absolutePath
+                        databaseDirectory = File(context.noBackupFilesDir, if (profileId == "legacy") "telegram-db" else "sessions/$profileId/db").absolutePath
+                        filesDirectory = File(context.filesDir, if (profileId == "legacy") "telegram-files" else "sessions/$profileId/files").absolutePath
                         databaseEncryptionKey = secure.databaseKey()
                         useFileDatabase = true; useChatInfoDatabase = true; useMessageDatabase = true; useSecretChats = false
                         apiId = this@TelegramDrive.apiId; apiHash = this@TelegramDrive.apiHash
@@ -291,8 +301,8 @@ class TelegramDrive internal constructor(
             chatId = chat.id
             store = IndexStore(context, me.id)
             val (files, folders) = withContext(Dispatchers.IO) { store!!.read() }
-            mutable.update { it.copy(account = me.firstName, files = files, folders = folders) }
-            refresh()
+            mutable.update { it.copy(accountId = me.id, account = me.firstName, files = files, folders = folders) }
+            if (!libraryManaged) refresh()
         }.onFailure { if (it is CancellationException) throw it; fail(it.message ?: "Could not open Saved Messages.") }
     }
 
@@ -433,6 +443,16 @@ class TelegramDrive internal constructor(
         try { request(TdApi.LogOut()) } catch (e: Exception) { loggingOut = false; throw e }
     }
     fun clearNotice() { mutable.update { it.copy(error = null, info = null) } }
+    suspend fun call(function: TdApi.Function<*>, timeout: Long = timeoutMillis): TdApi.Object = withContext(Dispatchers.Main) { request(function, timeout) }
+    suspend fun secret(name: String): String? = withContext(Dispatchers.IO) { secure.get(name) }
+    suspend fun saveSecret(name: String, value: String) = withContext(Dispatchers.IO) { secure.put(name, value) }
+    suspend fun resolvedSend(id: Long): TdApi.Message? = withContext(Dispatchers.Main) { earlyResults.remove(id)?.getOrThrow() }
+    suspend fun awaitSent(message: TdApi.Message): TdApi.Message = withContext(Dispatchers.Main) {
+        if (message.sendingState == null) return@withContext message
+        earlyResults.remove(message.id)?.let { return@withContext it.getOrThrow() }
+        val wait = sent.getOrPut(message.id) { CompletableDeferred() }
+        try { withTimeout(60 * 60 * 1000L) { wait.await() } } finally { sent.remove(message.id) }
+    }
     private fun connectionFailed(message: String) {
         initializationWatchdog?.cancel()
         mutable.update { it.copy(login = LoginStep.CONNECTION_ERROR, authError = safeReason(message), busy = false) }

@@ -1,76 +1,55 @@
 package app.tgdrive
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.net.Uri
 import android.os.IBinder
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import app.tgdrive.data.DriveFile
+import app.tgdrive.library.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
-/** One user-initiated transfer at a time. No background scanning or storage-wide permission. */
+/** User-initiated work; durable tasks and metadata live in the account database, not this process. */
 class TransferService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var job: Job? = null
-    private val drive get() = (application as DriveApp).drive
-
-    override fun onCreate() {
-        super.onCreate()
-        getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "File transfers", NotificationManager.IMPORTANCE_LOW))
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (job?.isActive == true) return START_NOT_STICKY
-        val pending = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_drive).setContentTitle("TG Drive").setContentText(text)
-            .setContentIntent(pending).setOngoing(true).setOnlyAlertOnce(true).build()
-        val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
-        ServiceCompat.startForeground(this, 10, notification("Preparing transfer…"), type)
-        job = scope.launch {
-            val observer = launch {
-                drive.state.collect { state ->
-                    getSystemService(NotificationManager::class.java).notify(10, notification(state.transfer ?: "Preparing transfer…"))
-                }
-            }
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
+    private val lanes=Semaphore(1)
+    private var pending=0
+    override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+        val profile=intent?.getStringExtra("profile")?:return START_NOT_STICKY
+        val initial=LibraryWorker.foregroundInfo(this)
+        ServiceCompat.startForeground(this,initial.notificationId,initial.notification,if(android.os.Build.VERSION.SDK_INT>=29)android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
+        pending++
+        scope.launch {
             try {
-                val uri = intent?.getStringExtra("uri")?.let(Uri::parse) ?: error("No file selected.")
-                when (intent.action) {
-                    UPLOAD -> drive.upload(uri, intent.getStringExtra("folder") ?: "")
-                    DOWNLOAD -> {
-                        val id = intent.getLongExtra("messageId", 0)
-                        val file: DriveFile = drive.state.value.files.firstOrNull { it.messageId == id } ?: error("File is not in the index. Refresh and retry.")
-                        drive.download(file, uri)
+                lanes.withPermit {
+                    val b=(application as DriveApp).sessions.bundle(profile)
+                    b.library.awaitReady()
+                    val observer=launch {
+                        b.library.state.collect{state->
+                            val current=state.tasks.firstOrNull{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}
+                            val title=if(state.preferences.hideNotifications || current?.vaultId?.isNotEmpty()==true)"Processing your saved transfers" else current?.title?:"Syncing your library"
+                            val open=PendingIntent.getActivity(this@TransferService,10,Intent(this@TransferService,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
+                            val notification=NotificationCompat.Builder(this@TransferService,"transfers").setSmallIcon(R.drawable.ic_drive).setContentTitle("TG Drive")
+                                .setContentText(title).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open).build()
+                            getSystemService(android.app.NotificationManager::class.java).notify(10,notification)
+                        }
                     }
-                    else -> error("Unknown transfer action.")
+                    try {
+                        withTimeout(55*60*1000L){
+                            if(intent.action==SCAN)b.backups.scan(intent.getStringExtra("rule"),intent.getBooleanExtra("force",false))
+                            b.transfers.drain()
+                        }
+                    }finally{observer.cancel()}
                 }
-            } catch (e: Exception) {
-                if (e !is CancellationException) drive.fail(e.message ?: "Transfer failed. Please retry.")
-            } finally {
-                observer.cancel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+            }catch(e:Exception){if(e !is CancellationException)(application as DriveApp).sessions.bundle(profile).library.report(e)}
+            finally{pending--;if(pending==0){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}
         }
         return START_NOT_STICKY
     }
-
-    // Android 15+ can time out a dataSync foreground service.
-    override fun onTimeout(startId: Int, fgsType: Int) {
-        drive.fail("Android stopped this long-running transfer. Reopen the app and check its status before retrying.")
-        job?.cancel(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
-    }
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
-    override fun onBind(intent: Intent?): IBinder? = null
-    companion object {
-        const val UPLOAD = "app.tgdrive.UPLOAD"
-        const val DOWNLOAD = "app.tgdrive.DOWNLOAD"
-        private const val CHANNEL = "transfers"
-    }
+    override fun onTimeout(startId:Int,fgsType:Int){scope.cancel();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}
+    override fun onDestroy(){scope.cancel();super.onDestroy()}
+    override fun onBind(intent:Intent?):IBinder?=null
+    companion object{const val PROCESS="app.tgdrive.PROCESS_QUEUE";const val SCAN="app.tgdrive.SCAN_BACKUPS"}
 }

@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 val local = Properties().apply {
@@ -23,8 +24,8 @@ android {
         applicationId = "app.tgdrive"
         minSdk = 26
         targetSdk = 36
-        versionCode = setting("APP_VERSION_CODE").ifBlank { "2" }.toInt().also { require(it > 0) }
-        versionName = setting("APP_VERSION_NAME").ifBlank { "0.1.1" }
+        versionCode = setting("APP_VERSION_CODE").ifBlank { "4" }.toInt().also { require(it > 0) }
+        versionName = setting("APP_VERSION_NAME").ifBlank { "0.2.0" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TELEGRAM_API_ID", literal(setting("TELEGRAM_API_ID")))
         buildConfigField("String", "TELEGRAM_API_HASH", literal(setting("TELEGRAM_API_HASH")))
@@ -74,6 +75,18 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.fragment:fragment-ktx:1.8.8")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.2")
+    implementation("androidx.media3:media3-exoplayer:1.7.1")
+    implementation("androidx.media3:media3-ui:1.7.1")
+    implementation("androidx.media3:media3-session:1.7.1")
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
+    implementation("com.google.crypto.tink:tink-android:1.18.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // Community prebuilt of Telegram's TDLib; see docs/SECURITY.md.
     implementation("io.github.tdlib-android:core:0.1.1")
     testImplementation("junit:junit:4.13.2")
