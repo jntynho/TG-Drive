@@ -1,0 +1,109 @@
+name: Android release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      APP_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare version and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || { echo 'Invalid version tag'; exit 1; }
+            echo "APP_VERSION_NAME=$version" >> "$GITHUB_ENV"
+            [[ -n "$KEYSTORE_BASE64" ]] || { echo 'Tag releases require Android signing secrets. See docs/RELEASING.md.'; exit 1; }
+          fi
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            : "${RELEASE_STORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD}"
+            : "${RELEASE_KEY_ALIAS:?Missing ANDROID_KEY_ALIAS}"
+            : "${RELEASE_KEY_PASSWORD:?Missing ANDROID_KEY_PASSWORD}"
+            umask 077
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/tgdrive-release.jks"
+            echo "RELEASE_STORE_FILE=$RUNNER_TEMP/tgdrive-release.jks" >> "$GITHUB_ENV"
+          else
+            [[ -z "$RELEASE_STORE_PASSWORD$RELEASE_KEY_ALIAS$RELEASE_KEY_PASSWORD" ]] || { echo 'Incomplete signing configuration'; exit 1; }
+            echo '::warning::No signing secrets: this manual build produces UNSIGNED files. They cannot be installed or uploaded to Play until signed.'
+          fi
+      - name: Tests and release build
+        run: ./gradlew --no-daemon testReleaseUnitTest lintRelease assembleRelease bundleRelease
+      - name: Check APK alignment and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          for apk in app/build/outputs/apk/release/*.apk; do
+            "$tools/zipalign" -c -P 16 4 "$apk"
+            if [[ -n "${RELEASE_STORE_FILE:-}" ]]; then
+              "$tools/apksigner" verify --verbose "$apk"
+            fi
+          done
+          python3 scripts/check_native_alignment.py app/build/outputs/apk/release/*.apk
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk dist/
+          cp app/build/outputs/bundle/release/*.aab dist/
+          cp app/build/outputs/mapping/release/mapping.txt dist/
+          (cd dist && sha256sum *.apk *.aab > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tg-drive-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-check-reports
+          path: app/build/reports/
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tgdrive-release.jks"
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tg-drive-release
+          path: dist
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "TG Drive $GITHUB_REF_NAME" --generate-notes --prerelease

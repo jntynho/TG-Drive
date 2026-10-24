@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+keystore.base64
+signing.properties
+dist/
+*.hprof
+.idea/
+.DS_Store
