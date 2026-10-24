@@ -1,6 +1,7 @@
 package app.tgdrive
 
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.tgdrive.data.*
@@ -33,7 +34,9 @@ class DeviceSmokeTest {
         val file = DriveFile(FileMetadata.create("sample.pdf", ""), 100, 2, 1234, 100, "application/pdf")
         var deleted = false
         render(DriveState(login = LoginStep.READY, files = listOf(file)), onDelete = { deleted = true })
-        compose.onNodeWithContentDescription("File actions").performScrollTo().performClick()
+        // Exercise the accessible overflow action to isolate the confirmation flow from overlay hit areas.
+        compose.onNodeWithContentDescription("File actions").performScrollTo().assertIsEnabled()
+            .performSemanticsAction(SemanticsActions.OnClick) { click -> click() }
         compose.onNodeWithText("Delete").performClick()
         compose.onNodeWithText("Delete permanently?").assertIsDisplayed()
         assertFalse(deleted)
