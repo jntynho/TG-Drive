@@ -179,8 +179,23 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         writes.withLock { db().putLocal(value); mutable.update { it.copy(local = it.local + (value.itemId to value)) } }
     }
     suspend fun updateStorage() = withContext(Dispatchers.IO) { cache?.trim(state.value.preferences.cacheMiB * 1024L * 1024); mutable.update { it.copy(cacheBytes = cache?.bytes() ?: 0, offlineBytes = cache?.let { c -> c.bytes(c.offline) } ?: 0) } }
-    suspend fun setPreferences(value: Preferences) { mutate { it.put("settings", "preferences", value.json()) }; updateStorage(); changed?.invoke() }
-    suspend fun updatePreferences(update: (Preferences)->Preferences) { mutate { it.put("settings","preferences",update(it.preferences()).json()) }; updateStorage(); changed?.invoke() }
+    suspend fun setPreferences(value: Preferences) = updatePreferences { value }
+    suspend fun updatePreferences(update: (Preferences)->Preferences) {
+        val account = state.value.accountId
+        val budgetChanged = withContext(Dispatchers.IO) {
+            writes.withLock {
+                checkAccount(account)
+                val old = db().preferences()
+                val next = update(old)
+                db().put("settings", "preferences", next.json())
+                // A toggle must not decrypt every metadata row or walk the entire disk cache.
+                mutable.update { it.copy(preferences = next) }
+                old.cacheMiB != next.cacheMiB
+            }
+        }
+        changed?.invoke()
+        if(budgetChanged) updateStorage()
+    }
     suspend fun setRule(value: BackupRule) = mutate { it.put("rules", value.id, value.json()) }
     suspend fun removeRule(id: String) = mutate { it.remove("rules", id) }
 

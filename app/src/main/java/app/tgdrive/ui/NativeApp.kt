@@ -35,7 +35,7 @@ data class SystemActions(
     val scanBackups: (String?,Boolean) -> Unit,
 )
 enum class NativeTab(val title: String, val icon: ImageVector) {
-    FILES("Files",Icons.Outlined.Folder), TRANSFERS("Activity",Icons.Outlined.SwapVert), BACKUPS("Backups",Icons.Outlined.Backup), SETTINGS("Settings",Icons.Outlined.Tune)
+    HOME("Home",Icons.Outlined.Home), GALLERY("Gallery",Icons.Outlined.PhotoLibrary), AUDIO("Audio",Icons.Outlined.AudioFile), SETTINGS("Settings",Icons.Outlined.Tune)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,7 +44,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     val auth by bundle.drive.state.collectAsStateWithLifecycle()
     val state by bundle.library.state.collectAsStateWithLifecycle()
     val profiles by pool.profiles.collectAsStateWithLifecycle()
-    var tab by rememberSaveable(bundle.profile.id) { mutableStateOf(NativeTab.FILES) }
+    var tab by rememberSaveable(bundle.profile.id) { mutableStateOf(NativeTab.HOME) }
     var accountSheet by remember { mutableStateOf(false) }
     var previewId by rememberSaveable(bundle.profile.id) { mutableStateOf("") }
     val pageState = rememberSaveableStateHolder()
@@ -54,9 +54,10 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
         if(message!=null){snackbar.showSnackbar(message);if(state.loaded)bundle.library.clearNotice();if(state.loaded||auth.login!=LoginStep.READY)bundle.drive.clearNotice()}
     }
     val preview = state.items.firstOrNull { it.id == previewId }
+    BackHandler(enabled=tab!=NativeTab.HOME && preview==null){tab=NativeTab.HOME}
     BackHandler(enabled=preview!=null){previewId=""}
     LaunchedEffect(state.items,previewId) { if(previewId.isNotEmpty()&&preview==null)previewId="" }
-    AnimatedContent(targetState=preview,transitionSpec={ fadeIn(tween(DriveStyle.EnterMillis)) togetherWith fadeOut(tween(DriveStyle.ExitMillis)) },label="file-preview") { item ->
+    AnimatedContent(targetState=preview,transitionSpec={ horizontalNavigation(targetState != null) },label="file-preview") { item ->
         if(item!=null) {
             NativePreview(item,bundle,system,onBack={previewId=""})
         }else{
@@ -71,26 +72,19 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
                     if(auth.login==LoginStep.READY)DriveCircleButton(Icons.Outlined.Refresh,"Sync metadata",{bundle.actions.run{bundle.library.sync()}},Modifier.padding(end=4.dp))
                     TextButton(onClick={accountSheet=true}){Text(if(state.accountName.isBlank())"Account" else state.accountName.take(16));Icon(Icons.Outlined.ExpandMore,null,Modifier.size(18.dp))}
                 },colors=TopAppBarDefaults.topAppBarColors(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background))
-            }},bottomBar={if(auth.login==LoginStep.READY&&state.loaded&&!showingSettings)NavigationBar(containerColor=MaterialTheme.colorScheme.background,tonalElevation=0.dp){
-                NativeTab.entries.forEach { page -> NavigationBarItem(selected=tab==page,onClick={tab=page},icon={
-                    BadgedBox(badge={if(page==NativeTab.TRANSFERS&&state.tasks.any{it.state==TaskState.FAILED})Badge()}){Icon(page.icon,page.title)}
-                },label={Text(page.title,style=MaterialTheme.typography.labelSmall)},colors=NavigationBarItemDefaults.colors(
-                    selectedIconColor=MaterialTheme.colorScheme.onSurface,selectedTextColor=MaterialTheme.colorScheme.onSurface,
-                    indicatorColor=MaterialTheme.colorScheme.surface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant)) }
-            }}){padding->
+            }},bottomBar={if(auth.login==LoginStep.READY&&state.loaded)DriveNavigationBar(tab,{tab=it},state.tasks.any{it.state==TaskState.FAILED})}){padding->
                 when {
                     auth.login!=LoginStep.READY->AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.padding(padding))
                     !state.loaded->Column(Modifier.fillMaxSize().padding(padding).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                         val openError=state.error?:auth.error
                         if(openError==null){CircularProgressIndicator();Spacer(Modifier.height(18.dp));Text("Opening your private library…")}else{Text(openError,color=MaterialTheme.colorScheme.error);Text("Your Telegram files have not been deleted.");DriveButton(onClick={bundle.library.retryInitialization()}){Text("Retry opening library")}}
                     }
-                    else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={fadeIn(tween(DriveStyle.EnterMillis)) togetherWith fadeOut(tween(DriveStyle.ExitMillis))},label="navigation") { page ->
+                    else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={horizontalNavigation(targetState.ordinal > initialState.ordinal)},label="navigation") { page ->
                         pageState.SaveableStateProvider(page){when(page){
-                            NativeTab.FILES->FilesPage(state,bundle,system,onPreview={previewId=it})
-                            NativeTab.TRANSFERS->TransfersPage(state,bundle,system)
-                            NativeTab.BACKUPS->BackupsPage(state,bundle,system)
-                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.FILES})
+                            NativeTab.HOME->HomePage(state,bundle,system,onPreview={previewId=it})
+                            NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previewId=it})
+                            NativeTab.AUDIO->MediaPage(state,bundle,system,gallery=false,onPreview={previewId=it})
+                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME})
                         }}
                     }
                 }
@@ -130,4 +124,16 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     Surface(onClick=onClick,shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(horizontal=20.dp,vertical=17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
         Icon(icon,null,tint=MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight,null,Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
     }}
+}
+
+@Composable
+internal fun DriveNavigationBar(tab: NativeTab, onSelect: (NativeTab) -> Unit, failedTransfers: Boolean = false) {
+    NavigationBar(containerColor=MaterialTheme.colorScheme.background,tonalElevation=0.dp) {
+        NativeTab.entries.forEach { page -> NavigationBarItem(selected=tab==page,onClick={onSelect(page)},icon={
+            BadgedBox(badge={if(page==NativeTab.HOME && failedTransfers) Badge()}){Icon(page.icon,null)}
+        },label={Text(page.title,style=MaterialTheme.typography.labelSmall)},colors=NavigationBarItemDefaults.colors(
+            selectedIconColor=MaterialTheme.colorScheme.onSurface,selectedTextColor=MaterialTheme.colorScheme.onSurface,
+            indicatorColor=MaterialTheme.colorScheme.surface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant)) }
+    }
 }

@@ -42,16 +42,40 @@ class ThumbnailTools(private val repository: LibraryRepository) {
     }
     suspend fun read(item: Item): Bitmap? = withContext(Dispatchers.IO) {
         val version=repository.version(item.versionId)
-        val part=version.thumbnail?:return@withContext null
+        val part=version.thumbnail
+        if(part == null) {
+            // Imported/older documents may have Telegram's own small preview. Never fetch
+            // the original photo or video just to populate a scrolling gallery.
+            if(!version.imported || version.parts.size != 1 || repository.itemVault(item.id).isNotEmpty()) return@withContext null
+            val document = repository.remote.document(version.parts.single().messageId).document
+            val mini = document.minithumbnail?.data
+            if(mini != null && mini.size <= 512*1024) return@withContext decodeBounded(mini)
+            val thumbnail = document.thumbnail?.file ?: return@withContext null
+            if(thumbnail.size !in 1..524_288) return@withContext null
+            val downloaded = repository.session.call(org.drinkless.tdlib.TdApi.DownloadFile(thumbnail.id, 1, 0, 0, true), 30_000) as org.drinkless.tdlib.TdApi.File
+            if(!downloaded.local.isDownloadingCompleted) return@withContext null
+            val file = java.io.File(downloaded.local.path)
+            if(file.length() !in 1..524_288) return@withContext null
+            return@withContext decodeBounded(file.readBytes())
+        }
         require(part.storedSize in 1..524_400)
         val vault=repository.itemVault(item.id)
         repository.cache!!.lease(version.id).use {
             val raw=repository.cache!!.raw(version,part)
             val bytes=if(part.encrypted)ByteArrayOutputStream().also{out->raw.inputStream().use{repository.vaults.decrypt(vault,CheckedInput(it,currentCoroutineContext()[Job]){repository.vaults.isUnlocked(vault)},out,"${item.id}/${version.id}/-1")}}.toByteArray() else raw.readBytes()
             ensureActive();check(repository.vaults.isUnlocked(vault))
-            BitmapFactory.decodeByteArray(bytes,0,bytes.size)
+            decodeBounded(bytes)
         }
     }
+    private fun decodeBounded(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+        if(bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while(maxOf(bounds.outWidth,bounds.outHeight) / sample > 320) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
 }
 
 fun orientBitmap(source:Bitmap,orientation:Int):Bitmap {

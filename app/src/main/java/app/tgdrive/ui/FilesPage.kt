@@ -69,7 +69,7 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             item {DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=DriveStyle.CardShape,placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(Icons.Outlined.Tune,"Search filters")}})}
             item {LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 items(listOf("All","Favorites","Offline","Trash")){label->DriveFilterChip(collection==label,{collection=label;selected=emptySet()},label={Text(label)})}
-                item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.setPreferences(state.preferences.copy(showGrid=value))}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)Icons.Outlined.ViewList else Icons.Outlined.GridView,null,Modifier.size(18.dp))})}
+                item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.updatePreferences{it.copy(showGrid=value)}}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)Icons.Outlined.ViewList else Icons.Outlined.GridView,null,Modifier.size(18.dp))})}
             }}
             if(state.vaults.isNotEmpty()&&collection=="All")item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 item{DriveFilterChip(vault.isEmpty(),{vault="";folder=""},label={Text("Personal")})}
@@ -162,11 +162,11 @@ fun folderPath(id:String,folders:List<Folder>):String {
 }}
 fun fileIcon(mime:String)=when{mime.startsWith("image/")->Icons.Outlined.Image;mime.startsWith("video/")->Icons.Outlined.Videocam;mime.startsWith("audio/")->Icons.Outlined.AudioFile;mime=="application/pdf"->Icons.Outlined.PictureAsPdf;else->Icons.AutoMirrored.Outlined.InsertDriveFile}
 
-@Composable private fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null,item.versionId,bundle) {
+@Composable fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null,item.id,item.versionId,bundle) {
         if(bundle!=null)value=try{ThumbnailTools(bundle.library).read(item)}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){null}
     }
     val thumb=bitmap
     if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
-    else Icon(fileIcon(item.mime),null,modifier,tint=MaterialTheme.colorScheme.primary)
+    else Box(modifier,contentAlignment=Alignment.Center) { Icon(fileIcon(item.mime),null,Modifier.size(36.dp),tint=MaterialTheme.colorScheme.primary) }
 }

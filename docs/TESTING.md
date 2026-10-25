@@ -1,4 +1,4 @@
-# Validation and acceptance — Android 0.3.0
+# Validation and acceptance — Android 0.4.0
 
 ## Automated workflow
 
@@ -16,7 +16,7 @@ The device suite expects English. It tests native TDLib loading/execution, authe
 
 The optional sharing server tests owner authentication, path/name validation, exact bytes, password enforcement, expiry, revocation, size/hash rejection, HTML escaping and idempotent upload retries. Loopback HTTP tests do not establish a deployed HTTPS service or production scalability.
 
-The 0.3.0 visual refresh adds three Robolectric/native-graphics Compose cases:
+The earlier 0.3.0 visual refresh added three Robolectric/native-graphics Compose cases:
 all nine grouped settings routes remain reachable, switch rows expose a single
 labelled control and retain toggled state, and phone sign-in gates Continue and
 forwards the entered number unchanged. The cases generate synthetic-state
@@ -63,3 +63,7 @@ Production distribution also requires independent crypto/native dependency revie
 - Local device/account/service acceptance limitations above remain in force. Consult the GitHub Actions run for execution of the new emulator suite and signed artifact generation.
 
 The native device suite also passed on GitHub's accelerated Android 30 emulator in [run 40121518708](https://github.com/jntynho/TG-Drive/actions/runs/40121518708/job/120953907829). This verifies the checked-in smoke scope; it does not establish authenticated account or physical-device acceptance. The older deletion test activates the accessible overflow action; separate native file-card cases exercise physical taps and long press.
+
+The 0.4.0 navigation update adds collection tests for media MIME filtering, current-version upload ordering, nested folders, unfinished uploads, Trash and vault visibility. Compose tests cover the four navigation choices, Home management links and Gallery preview/action separation. Preference editor tests cover immediate feedback, rapid alternating changes, preserved unrelated fields and rollback on storage failure. A repository integration test verifies preferences persist without republishing library item lists. Generated Home/Gallery/settings previews use synthetic fixtures; they do not prove authenticated Telegram behavior or physical-device animation performance.
+
+Local 0.4.0 validation: 72 tests per Debug/Release variant, including the new interaction and preference cases; zero failures/errors. Lint reports no errors (24 warnings, without suppressions). Native instrumentation compilation and actionlint also pass. Release signing, native emulator execution, upgrade retention and publication are verified separately by the matching Actions run.

@@ -169,16 +169,17 @@ fun DriveScreen(
 fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier = Modifier) {
     var apiId by remember { mutableStateOf("") }
     var apiHash by remember { mutableStateOf("") }
-    var value by remember(state.login) { mutableStateOf("") }
     val uri = LocalUriHandler.current
     Column(modifier.fillMaxSize().background(DriveStyle.SignInCanvas).imePadding().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(20.dp)) {
             Icon(Icons.Outlined.CloudQueue, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
             Text("Welcome to TG Drive", style=MaterialTheme.typography.headlineLarge, textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
+        androidx.compose.animation.AnimatedContent(state.login, transitionSpec={horizontalNavigation(targetState != LoginStep.CONFIGURE)},label="sign-in-step") { step ->
+            var value by remember(step) { mutableStateOf("") }
         Column(Modifier.fillMaxWidth(), verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                when (state.login) {
+                when (step) {
                     LoginStep.CONFIGURE -> {
                         Text(stringResource(R.string.configure), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(R.string.configure_body), style = MaterialTheme.typography.bodyMedium)
@@ -189,15 +190,15 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                         TextButton(onClick = { uri.openUri("https://my.telegram.org/apps") }) { Text(stringResource(R.string.get_api)) }
                     }
                     LoginStep.PHONE, LoginStep.CODE, LoginStep.PASSWORD -> {
-                        val label = when (state.login) { LoginStep.PHONE -> R.string.phone; LoginStep.CODE -> R.string.code; else -> R.string.password }
+                        val label = when (step) { LoginStep.PHONE -> R.string.phone; LoginStep.CODE -> R.string.code; else -> R.string.password }
                         Text(stringResource(R.string.connect_telegram), style = MaterialTheme.typography.titleLarge)
-                        Text(stringResource(when (state.login) { LoginStep.PHONE -> R.string.phone_body; LoginStep.CODE -> R.string.code_body; else -> R.string.password_body }))
+                        Text(stringResource(when (step) { LoginStep.PHONE -> R.string.phone_body; LoginStep.CODE -> R.string.code_body; else -> R.string.password_body }))
                         DriveTextField(value, { value = it }, label = { Text(stringResource(label)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = if (state.login == LoginStep.PASSWORD) PasswordVisualTransformation() else VisualTransformation.None,
-                            keyboardOptions = KeyboardOptions(keyboardType = when(state.login) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
+                            visualTransformation = if (step == LoginStep.PASSWORD) PasswordVisualTransformation() else VisualTransformation.None,
+                            keyboardOptions = KeyboardOptions(keyboardType = when(step) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
                         DriveButton(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        if (state.login == LoginStep.PHONE) TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
+                        if (step == LoginStep.PHONE) TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.CLOSED -> {
                         Text(stringResource(R.string.signed_out))
@@ -224,6 +225,7 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                     else -> R.string.network_ready
                 }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
         Text(stringResource(R.string.auth_privacy), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("TG Drive · ${app.tgdrive.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall)
     }

@@ -1,6 +1,12 @@
 package app.tgdrive.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -110,10 +116,10 @@ fun DriveCircleButton(icon: ImageVector, description: String, onClick: () -> Uni
 }
 
 @Composable
-fun DrivePageHeader(title: String, onBack: () -> Unit, close: Boolean = false) {
+fun DrivePageHeader(title: String, onBack: () -> Unit, close: Boolean = false, backDescription: String = "Back to settings") {
     Box(Modifier.fillMaxWidth().heightIn(min = 80.dp).padding(horizontal = DriveStyle.PageInset, vertical = 12.dp)) {
         DriveCircleButton(if (close) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack,
-            if (close) "Close settings" else "Back to settings", onBack, Modifier.align(Alignment.CenterStart))
+            if (close) "Close settings" else backDescription, onBack, Modifier.align(Alignment.CenterStart))
         Text(title, Modifier.align(Alignment.Center).padding(horizontal = 60.dp),
             style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
@@ -125,12 +131,16 @@ fun DriveDivider() {
         color = MaterialTheme.colorScheme.outlineVariant)
 }
 
+/** Reference proportions: a wide capsule thumb inside a 64 × 28 dp track. */
 @Composable
-fun DriveSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    Switch(checked, onCheckedChange, modifier,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = Color.White, checkedTrackColor = MaterialTheme.colorScheme.primary,
-            checkedBorderColor = Color.Transparent, uncheckedThumbColor = Color(0xFF171819),
-            uncheckedTrackColor = Color(0xFF9FA2A5), uncheckedBorderColor = Color.Transparent,
-        ))
+fun DriveSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier) {
+    val track by animateColorAsState(if(checked) MaterialTheme.colorScheme.primary else Color(0xFFA7AAAE), tween(140), label="switch-track")
+    val thumb by animateColorAsState(if(checked) Color.White else Color(0xFF111111), tween(140), label="switch-thumb")
+    val offset by animateDpAsState(if(checked) 22.dp else 2.dp, tween(140), label="switch-position")
+    val touch = if(onCheckedChange != null) Modifier.toggleable(checked, role=Role.Switch, onValueChange=onCheckedChange) else Modifier
+    Box(modifier.then(touch).size(width=64.dp,height=48.dp),contentAlignment=Alignment.Center) {
+        Box(Modifier.size(64.dp,28.dp).background(track,DriveStyle.PillShape)) {
+            Box(Modifier.offset(x=offset,y=2.dp).size(40.dp,24.dp).background(thumb,DriveStyle.PillShape))
+        }
+    }
 }

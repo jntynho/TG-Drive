@@ -29,8 +29,8 @@ android {
         applicationId = "app.tgdrive"
         minSdk = 26
         targetSdk = 36
-        versionCode = setting("APP_VERSION_CODE").ifBlank { "13" }.toInt().also { require(it > 0) }
-        versionName = setting("APP_VERSION_NAME").ifBlank { "0.3.0" }
+        versionCode = setting("APP_VERSION_CODE").ifBlank { "14" }.toInt().also { require(it > 0) }
+        versionName = setting("APP_VERSION_NAME").ifBlank { "0.4.0" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TELEGRAM_API_ID", literal(setting("TELEGRAM_API_ID")))
         buildConfigField("String", "TELEGRAM_API_HASH", literal(setting("TELEGRAM_API_HASH")))

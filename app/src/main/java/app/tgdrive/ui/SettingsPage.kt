@@ -28,8 +28,17 @@ import app.tgdrive.library.*
     var page by rememberSaveable{mutableStateOf("home")};var confirmCache by remember{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
     BackHandler { if(page!="home")page="home" else onClose() }
-    fun prefs(update:(Preferences)->Preferences){bundle.actions.run{bundle.library.updatePreferences(update)}}
-    AnimatedContent(page,transitionSpec={fadeIn(tween(DriveStyle.EnterMillis)) togetherWith fadeOut(tween(DriveStyle.ExitMillis))},label="settings-detail"){current->
+    val editor = remember(bundle, state.accountId) { PreferenceEditor(state.preferences, bundle.library.scope,
+        read={bundle.library.state.value.preferences}, save={update->
+            bundle.library.checkAccount(state.accountId)
+            val previous=bundle.library.state.value.preferences.scanIntervalHours
+            bundle.library.updatePreferences(update)
+            val interval=bundle.library.state.value.preferences.scanIntervalHours
+            if(interval!=previous) BackgroundWork.schedule(bundle.library.context,bundle.profile.id,interval)
+        }, report={bundle.library.report(it)}) }
+    LaunchedEffect(state.preferences) { editor.observe(state.preferences) }
+    fun prefs(update:(Preferences)->Preferences) { editor.update(update) }
+    AnimatedContent(page,transitionSpec={horizontalNavigation(targetState != "home")},label="settings-detail"){current->
         Column(Modifier.fillMaxSize()){
             DrivePageHeader(settingsTitle(current),onBack={if(current=="home")onClose() else page="home"},close=current=="home")
             when(current){
@@ -40,32 +49,32 @@ import app.tgdrive.library.*
                     when(current){
                         "transfers"->{
                             item{DriveGroup{
-                                SettingSwitch("Unmetered network only","Paused work explains what it is waiting for.",state.preferences.wifiOnly){v->prefs{it.copy(wifiOnly=v)}}
+                                SettingSwitch("Unmetered network only","Paused work explains what it is waiting for.",editor.value.wifiOnly){v->prefs{it.copy(wifiOnly=v)}}
                                 DriveDivider()
-                                SettingSwitch("Transfer while charging","Applies to network transfers.",state.preferences.chargingOnly){v->prefs{it.copy(chargingOnly=v)}}
+                                SettingSwitch("Transfer while charging","Applies to network transfers.",editor.value.chargingOnly){v->prefs{it.copy(chargingOnly=v)}}
                                 DriveDivider()
-                                SettingSwitch("Bounded automatic retries","At most three attempts, with backoff and provider wait handling.",state.preferences.autoRetry){v->prefs{it.copy(autoRetry=v)}}
+                                SettingSwitch("Bounded automatic retries","At most three attempts, with backoff and provider wait handling.",editor.value.autoRetry){v->prefs{it.copy(autoRetry=v)}}
                                 DriveDivider()
-                                SettingSwitch("Detect identical content","Compare file contents, not just names.",state.preferences.detectDuplicates){v->prefs{it.copy(detectDuplicates=v)}}
+                                SettingSwitch("Detect identical content","Compare file contents, not just names.",editor.value.detectDuplicates){v->prefs{it.copy(detectDuplicates=v)}}
                                 DriveDivider()
-                                SettingSwitch("Sync metadata when opening","Changes from other devices are reconciled through the journal.",state.preferences.autoSync){v->prefs{it.copy(autoSync=v)}}
+                                SettingSwitch("Sync metadata when opening","Changes from other devices are reconciled through the journal.",editor.value.autoSync){v->prefs{it.copy(autoSync=v)}}
                             }}
-                            item{Text("Average upload pace",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(0,256,1024,4096)){rate->DriveFilterChip(state.preferences.uploadPaceKiB==rate,{prefs{it.copy(uploadPaceKiB=rate)}},label={Text(if(rate==0)"Unrestricted"else "$rate KiB/s")})}}}
+                            item{Text("Average upload pace",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(0,256,1024,4096)){rate->DriveFilterChip(editor.value.uploadPaceKiB==rate,{prefs{it.copy(uploadPaceKiB=rate)}},label={Text(if(rate==0)"Unrestricted"else "$rate KiB/s")})}}}
                             item{Text("Pacing waits between completed parts. A part can transfer in a faster burst; this is not an instantaneous network speed cap. It applies to queued file uploads, not playback or previews.",style=MaterialTheme.typography.bodySmall)}
-                            item{Text("Part size",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(64,256,512,1024)){m->DriveFilterChip(state.preferences.chunkMiB==m,{prefs{it.copy(chunkMiB=m)}},label={Text("$m MiB")})}}}
+                            item{Text("Part size",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(64,256,512,1024)){m->DriveFilterChip(editor.value.chunkMiB==m,{prefs{it.copy(chunkMiB=m)}},label={Text("$m MiB")})}}}
                             item{InfoCard("No promise to bypass Telegram limits","Part uploads retain completed pieces. The active part may restart after pause. At most 128 parts per logical file are supported. Account and API limits still apply.")}
-                            item{Text("Background scan interval",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(1,6,12,24)){h->DriveFilterChip(state.preferences.scanIntervalHours==h,{prefs{it.copy(scanIntervalHours=h)};BackgroundWork.schedule(bundle.library.context,bundle.profile.id,h)},label={Text("${h}h")})}}}
+                            item{Text("Background scan interval",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(1,6,12,24)){h->DriveFilterChip(editor.value.scanIntervalHours==h,{prefs{it.copy(scanIntervalHours=h)}},label={Text("${h}h")})}}}
                         }
                         "storage"->{
                             item{InfoCard("App cache: ${formatBytes(state.cacheBytes)}","Offline copies: ${formatBytes(state.offlineBytes)}. Pending upload sources are kept separately and are not removed by cache cleaning.",Icons.Outlined.Storage)}
                             item{DriveButton(onClick={confirmCache=true}){Text("Clear unpinned app cache")}}
-                            item{Text("Cache budget",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(128,256,512,1024)){m->DriveFilterChip(state.preferences.cacheMiB==m,{prefs{it.copy(cacheMiB=m)}},label={Text("$m MiB")})}}}
+                            item{Text("Cache budget",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(128,256,512,1024)){m->DriveFilterChip(editor.value.cacheMiB==m,{prefs{it.copy(cacheMiB=m)}},label={Text("$m MiB")})}}}
                             item{ActionRow("Inspect Telegram native cache","Separate from the app's verified offline copies",Icons.Outlined.Folder){bundle.actions.run{
                                 val stats=bundle.drive.call(org.drinkless.tdlib.TdApi.GetStorageStatisticsFast()) as org.drinkless.tdlib.TdApi.StorageStatisticsFast
                                 info="Telegram files: ${formatBytes(stats.filesSize)}\nTelegram database: ${formatBytes(stats.databaseSize)}\nNative cache is managed independently. Your original cloud messages are not a cache."
                             }}}
                             item{ActionRow("Free verified local originals","Review copies whose downloaded content was verified",Icons.Outlined.CleaningServices){bundle.actions.run{cleanup=bundle.actions.cleanupCandidates()}}}
-                            item{Text("Trash retention",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(7,30,90)){d->DriveFilterChip(state.preferences.trashDays==d,{prefs{it.copy(trashDays=d)}},label={Text("$d days")})}}}
+                            item{Text("Trash retention",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(7,30,90)){d->DriveFilterChip(editor.value.trashDays==d,{prefs{it.copy(trashDays=d)}},label={Text("$d days")})}}}
                             item{InfoCard("Retention is not a remote timer","Expired Trash is cleaned when eligible background work runs or the app performs cleanup. Vaults may need unlocking. Independent copies of important files are still recommended.")}
                         }
                         "index"->{
@@ -86,11 +95,11 @@ import app.tgdrive.library.*
                             item{ActionRow("Encrypted vaults","Create, unlock or lock protected content",Icons.Outlined.EnhancedEncryption){page="vaults"}}
                             item{SettingSwitch("App lock","Use device credentials or biometrics after 30 seconds away.",state.preferences.lockEnabled,system.setAppLock)}
                             item{DriveGroup{
-                                SettingSwitch("Hide notification details","Use a generic transfer notification.",state.preferences.hideNotifications){v->prefs{it.copy(hideNotifications=v)}}
+                                SettingSwitch("Hide notification details","Use a generic transfer notification.",editor.value.hideNotifications){v->prefs{it.copy(hideNotifications=v)}}
                                 DriveDivider()
-                                SettingSwitch("Protect screenshots and recents","Screenshots are also protected while vault content is open.",state.preferences.secureScreen){v->prefs{it.copy(secureScreen=v)}}
+                                SettingSwitch("Protect screenshots and recents","Screenshots are also protected while vault content is open.",editor.value.secureScreen){v->prefs{it.copy(secureScreen=v)}}
                                 DriveDivider()
-                                SettingSwitch("Backup health notifications","Only if Android notification permission is granted.",state.preferences.backupNotifications){v->prefs{it.copy(backupNotifications=v)}}
+                                SettingSwitch("Backup health notifications","Only if Android notification permission is granted.",editor.value.backupNotifications){v->prefs{it.copy(backupNotifications=v)}}
                             }}
                             item{InfoCard("App lock is not cloud encryption","Files outside a vault are Telegram cloud documents. They can still be accessed from your Telegram account. Vault keys, index encryption and screen lock are separate protections.",Icons.Outlined.Shield)}
                         }
@@ -147,13 +156,7 @@ import app.tgdrive.library.*
                 Text(title,style=MaterialTheme.typography.titleSmall)
                 Text(description,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Switch(value,onCheckedChange=null,colors=SwitchDefaults.colors(
-                checkedThumbColor=androidx.compose.ui.graphics.Color.White,
-                checkedTrackColor=MaterialTheme.colorScheme.primary,
-                checkedBorderColor=androidx.compose.ui.graphics.Color.Transparent,
-                uncheckedThumbColor=androidx.compose.ui.graphics.Color(0xFF171819),
-                uncheckedTrackColor=androidx.compose.ui.graphics.Color(0xFF9FA2A5),
-                uncheckedBorderColor=androidx.compose.ui.graphics.Color.Transparent))
+            DriveSwitch(value,onCheckedChange=null)
         }
     }
 }

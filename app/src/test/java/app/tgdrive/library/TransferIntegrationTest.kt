@@ -47,6 +47,18 @@ class TransferIntegrationTest {
     }
     @After fun close()=runBlocking {scope.cancel();scope.coroutineContext[Job]?.join();repo.database?.close();Dispatchers.resetMain();dispatcher.close()}
     private fun source(bytes:ByteArray,name:String="payload.bin")=Uri.fromFile(File(context.cacheDir,name).apply{writeBytes(bytes)})
+    @Test fun `preference edits persist without republishing library or trimming cache`()=runBlocking {
+        open()
+        val snapshot=repo.state.value.items
+        val cacheFile=File(repo.cache!!.root,"retained.tmp").apply{writeText("retained")}
+        repo.updatePreferences{it.copy(wifiOnly=true)}
+        repo.updatePreferences{it.copy(chargingOnly=true)}
+        repo.updatePreferences{it.copy(wifiOnly=false)}
+        assertSame(snapshot,repo.state.value.items)
+        assertFalse(repo.db().preferences().wifiOnly)
+        assertTrue(repo.db().preferences().chargingOnly)
+        assertTrue(cacheFile.exists())
+    }
     @Test fun `multipart upload commits once and restored bytes match original`()=runBlocking {
         open();val bytes=ByteArray(2_200_123){(it%251).toByte()}
         engine.enqueueUpload(listOf(source(bytes)));engine.drain(20_000)

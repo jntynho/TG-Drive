@@ -86,6 +86,44 @@ class DriveDesignTest {
         compose.onNodeWithText("App lock").assertIsOff().performClick().assertIsOn()
         screenshot("privacy")
         compose.onNodeWithText("App lock").performClick().assertIsOff()
+        screenshot("privacy-off")
+    }
+
+    @Test fun bottomBarHasFourDestinationsAndChangesSelection() {
+        render { Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.Bottom) {
+            var selected by remember { mutableStateOf(NativeTab.HOME) }
+            DriveNavigationBar(selected,{selected=it})
+        } }
+        listOf("Home","Gallery","Audio","Settings").forEach { title ->
+            compose.onNodeWithText(title).performClick().assertIsSelected()
+        }
+    }
+
+    @Test fun galleryTileOpensPreviewAndItsMenuOnlyOpensActions() {
+        val photo=app.tgdrive.library.Item(id="photo",name="Holiday.jpg",mime="image/jpeg",versionId="v1")
+        val video=photo.copy(id="video",name="Walk.mp4",mime="video/mp4",versionId="v2")
+        var preview="";var menu=""
+        render { Column {
+            SectionTitle("Gallery","Your photos and videos")
+            MediaContent(listOf(photo,video),true,onPreview={preview=it},onMenu={menu=it})
+        } }
+        compose.onNodeWithText("Holiday.jpg").performClick()
+        assertEquals("photo",preview)
+        compose.onNodeWithContentDescription("Actions for Walk.mp4").performClick()
+        assertEquals("video",menu);assertEquals("photo",preview)
+        screenshot("gallery")
+    }
+
+    @Test fun homeKeepsLibraryActivityAndBackupsReachable() {
+        var route=""
+        render { Column {
+            Box(Modifier.weight(1f)) { HomeContent(LibraryState(),onOpen={route=it},onPreview={},onMenu={},onUpload={}) }
+            DriveNavigationBar(NativeTab.HOME,{})
+        } }
+        screenshot("home")
+        mapOf("Browse all files" to "files", "Activity" to "activity", "Backups" to "backups").forEach { (label,target) ->
+            compose.onNodeWithText(label).performClick();assertEquals(target,route)
+        }
     }
 
     @Test fun phoneSignInKeepsContinueDisabledUntilInputAndPassesNumberUnchanged() {

@@ -1,4 +1,4 @@
-# Building and releasing 0.3.0
+# Building and releasing 0.4.0
 
 ## GitHub Actions
 
@@ -9,7 +9,7 @@
 3. Existing signature verification, ZIP and ELF alignment checks.
 4. Validate that all standalone APKs contain identical DEX/resources/assets and byte-identical native libraries for their ABI. Upload each APK separately with its own checksum; AAB and mapping files have separate artifacts.
 5. Install the published signed universal 0.1.1 APK on a disposable x86_64 emulator, seed synthetic private files/preferences, and install the new signed x86_64 APK with `adb install -r`. Check UID/data retention and release activity launch. No real Telegram session is created.
-6. Tag/manual publication waits for the upgrade check; main pushes only build downloadable artifacts.
+6. Publication waits for the upgrade check. Every main push creates a real Release with direct APK assets, tagged `v<version>-build.<run-number>`. Explicit version tags and manual publishing use `v<version>`. Assets finish uploading to a draft before it is made public.
 
 | Artifact | Use |
 | --- | --- |
@@ -22,7 +22,7 @@
 
 Choose one APK matching the device. These are standalone APKs, not a set that must be installed together. All outputs share the application ID, version code/name and signing identity. Ordinary debug/emulator builds keep their existing universal packaging; opt into distribution APKs with `-PsplitApks=true`. ABI selection changes only packaging, not transfer, account, encryption or preview code.
 
-Push to `main` builds artifacts. A `v…` tag or workflow dispatch with `publish=true` creates a GitHub prerelease. Default manual version is `0.3.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
+Push to `main`, a `v…` tag, or workflow dispatch with `publish=true` creates a GitHub Release. Open Releases → latest → Assets and download a `.apk` directly; Actions artifacts are still ZIP archives and the automatic source ZIP/TAR files are not app installers. Default manual version is `0.4.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
 
 ## Existing signing identity
 

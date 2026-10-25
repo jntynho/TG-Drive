@@ -1,6 +1,6 @@
 # TG Drive
 
-Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.3.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
+Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.4.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
 
 - Multiple uploads, persistent queue, priority, per-file retry/pause, unmetered/charging rules and approximate upload pacing.
 - Nested folders, rename/move, tags, favorites, search/filter, grid/list, trash, content versions and reversible organization rules.
@@ -13,7 +13,7 @@ Android file manager for documents stored in **your own Telegram Saved Messages*
 
 See [the feature-by-feature implementation and limits](docs/IMPLEMENTATION_STATUS.md), [security boundaries](docs/SECURITY.md), [validation](docs/TESTING.md), and [release instructions](docs/RELEASING.md).
 
-The [0.3.0 visual refresh](docs/DESIGN.md) applies the supplied Muse Android reference to the native UI: charcoal surfaces, grouped rounded settings, blue pill buttons, filled fields and quiet transitions. It uses the system font and adds no runtime libraries or image assets.
+The [0.4.0 visual refresh](docs/DESIGN.md) applies the supplied Muse Android reference to the native UI: charcoal surfaces, grouped rounded settings, blue pill buttons, filled fields and quiet transitions. It uses the system font and adds no runtime libraries or image assets.
 
 ## Build
 
@@ -44,3 +44,9 @@ Public links require a real deployed HTTPS service. None is deployed by this rep
 There is no unlimited-storage guarantee. Account/API limits apply. An index cannot recover content deleted from Telegram. Imported files without a known original hash are not described as original-content verified. Do not use the experimental build as the sole copy of important files.
 
 Each cloud task already has an isolated checkout. Use this checkout; do not create Git worktrees unless explicitly requested.
+
+### Direct APK downloads
+
+Open [the latest GitHub Release](https://github.com/jntynho/TG-Drive/releases/latest) and choose the `arm64-v8a.apk` asset for most modern phones. Each successful main build publishes signed APK assets after device tests and an upgrade check. You do not need the source ZIP or the Actions artifact ZIP. Install the APK over the existing app to retain its data.
+
+The bottom navigation is Home / Gallery / Audio / Settings. Home includes recent uploads and links to Browse all files, Activity and Backups. Gallery shows image/video thumbnails in a grid; Audio collects songs and recordings. Pages use horizontal navigation transitions.
