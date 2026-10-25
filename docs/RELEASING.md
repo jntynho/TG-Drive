@@ -1,4 +1,4 @@
-# Building and releasing 0.8.0
+# Building and releasing
 
 ## GitHub Actions
 
@@ -20,9 +20,11 @@
 | `tg-drive-bundle` | AAB for store tooling; not directly installable |
 | `tg-drive-diagnostics` | R8 mapping for developers; not needed to install |
 
+Published Release assets use stable names: `tg-drive-arm64-v8a.apk`, `tg-drive-armeabi-v7a.apk`, `tg-drive-universal.apk`, `tg-drive-x86_64.apk`, `tg-drive-x86.apk` and `tg-drive.aab`. README buttons use `/releases/latest/download/<filename>` so they follow the latest published release across version changes. The filenames are normalized only during publication; versioned Actions artifacts and the version inside each APK are preserved. Release `SHA256SUMS` covers the exact published filenames. Earlier releases retain their original asset names.
+
 Choose one APK matching the device. These are standalone APKs, not a set that must be installed together. All outputs share the application ID, version code/name and signing identity. Ordinary debug/emulator builds keep their existing universal packaging; opt into distribution APKs with `-PsplitApks=true`. ABI selection changes only packaging, not transfer, account, encryption or preview code.
 
-Push to `main`, a `v…` tag, or workflow dispatch with `publish=true` creates a GitHub Release. Open Releases → latest → Assets and download a `.apk` directly; Actions artifacts are still ZIP archives and the automatic source ZIP/TAR files are not app installers. Default manual version is `0.8.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
+Push to `main`, a `v…` tag, or workflow dispatch with `publish=true` creates a GitHub Release. Open Releases → latest → Assets and download a `.apk` directly; Actions artifacts are still ZIP archives and the automatic source ZIP/TAR files are not app installers. Default manual version is `0.9.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
 
 ## Existing signing identity
 
