@@ -14,7 +14,7 @@ class NativeLaunchTest {
         compose.onNodeWithText("Sign in").assertIsDisplayed()
         compose.onNodeWithText("Connect your own app").assertIsDisplayed()
         compose.onNodeWithText("Continue").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Manage accounts").performClick()
+        compose.onNodeWithText("Manage accounts").performClick()
         compose.onNodeWithText("Your accounts").assertIsDisplayed()
     }
 }

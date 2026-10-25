@@ -392,9 +392,10 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         saveUploaded(Item(meta.id, meta.name, folder, candidate.mime, candidate.size, versionId = version.id, createdAt = candidate.date), version, "", "")
         notice("Imported the selected reference. The original message and caption were not modified.")
     }
+    fun offerTrashUndo(ids:List<String>){mutable.update{it.copy(notice="Moved ${ids.size} files to Trash",undoTrashIds=ids)}}
     fun notice(message: String) { mutable.update { it.copy(notice = message) } }
     fun report(error: Throwable) { if (error is CancellationException) throw error; mutable.update { it.copy(error = error.message?.take(300) ?: "Operation failed.") } }
-    fun clearNotice() { mutable.update { it.copy(error = null, notice = null, lastShare = null) } }
+    fun clearNotice() { mutable.update { it.copy(error = null, notice = null, lastShare = null, undoTrashIds=emptyList()) } }
     fun shareResult(result: ShareResult) { mutable.update { it.copy(lastShare = result) } }
     fun setOrganization(value: List<OrganizationChange>) { mutable.update { it.copy(organization = value) } }
     fun clearImports() { mutable.update { it.copy(incoming = emptyList()) } }

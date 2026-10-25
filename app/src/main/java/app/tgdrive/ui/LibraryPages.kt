@@ -1,9 +1,16 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.tgdrive.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.semantics.selected
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import java.text.DateFormat
+import java.util.Date
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.layout.*
@@ -30,12 +37,12 @@ internal fun libraryCollection(state: LibraryState, kind: String = "all", query:
         val vault = state.itemVaults[it.id].orEmpty()
         it.versionId.isNotEmpty() && it.deletedAt == 0L && (vault.isEmpty() || vault in state.unlockedVaultIds) &&
             (kind == "all" || kind == "gallery" && (it.mime.startsWith("image/") || it.mime.startsWith("video/")) || kind == "audio" && it.mime.startsWith("audio/")) &&
-            (query.isBlank() || (it.name + " " + it.tags.joinToString(" ")).contains(query.trim(), true))
+            (query.isBlank() || (it.name + " " + it.tags.joinToString(" ")+" "+state.local[it.id]?.ocrText.orEmpty()).contains(query.trim(), true))
     }.sortedByDescending { uploadedAt[it.versionId] ?: it.createdAt }.toList()
 }
 
 @Composable
-fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit) {
+fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit,homeQuery:String="",filesQuery:String="",onFilters:((()->Unit)->Unit)={},recentView:Boolean=false,onRecent:()->Unit={},onAdd:()->Unit={},addRequested:Boolean=false,onAddConsumed:()->Unit={}) {
     var actionId by remember { mutableStateOf("") }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     BackHandler(page != "home") { onPage("home") }
@@ -43,10 +50,10 @@ fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, 
         saved.SaveableStateProvider(route) {
             if (route == "home") {
                 HomeContent(state, bundle, onOpen = onPage, onPreview = onPreview, onMenu = { actionId = it },
-                    onUpload = { system.upload("", "", "") })
+                    onUpload = onAdd,query=homeQuery,onRecent=onRecent)
             } else Column(Modifier.fillMaxSize()) {
                 when(route) {
-                    "files" -> FilesPage(state, bundle, system, onPreview, onFolderTitle,onFolderBack)
+                    "files" -> FilesPage(state, bundle, system, onPreview, onFolderTitle,onFolderBack,query=filesQuery,onFilters=onFilters,recentView=recentView,addRequested=addRequested,onAddConsumed=onAddConsumed)
                     "activity" -> TransfersPage(state, bundle, system)
                     "backups" -> BackupsPage(state, bundle, system)
                 }
@@ -60,74 +67,92 @@ fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, 
 
 @Composable
 internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onOpen: (String) -> Unit,
-                         onPreview: (String) -> Unit, onMenu: (String) -> Unit, onUpload: () -> Unit) {
-    val recent by produceState(emptyList<Item>(), state.items, state.versions, state.itemVaults, state.unlockedVaultIds) {
-        value = withContext(Dispatchers.Default) { libraryCollection(state).take(20) }
+                         onPreview: (String) -> Unit, onMenu: (String) -> Unit, onUpload: () -> Unit,
+                         query:String="",onRecent:()->Unit={onOpen("files")}) {
+    val rows by produceState(emptyList<Item>(),state.items,state.versions,state.itemVaults,state.unlockedVaultIds,query,state.local) {
+        value=withContext(Dispatchers.Default){libraryCollection(state,query=query).let{if(query.isBlank())it.take(6)else it}}
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(16.dp)) {
-        item { SectionTitle("Your files", "Everything you keep, in one place") }
-        item { DriveButton(onUpload, Modifier.fillMaxWidth()) { Icon(DriveIcons.Add,null); Spacer(Modifier.width(8.dp)); Text("Add files") } }
-        item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf(Triple("Browse all files","files",DriveIcons.Folder),Triple("Activity","activity",DriveIcons.SwapVert),Triple("Backups","backups",DriveIcons.Backup)).forEach { (title,route,icon) ->
-                DriveCard(onClick={onOpen(route)},modifier=Modifier.weight(1f)) {
-                    Column(Modifier.fillMaxWidth().heightIn(min=88.dp).padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Icon(icon,null)
-                        Text(title,style=MaterialTheme.typography.labelMedium,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+    val allowedIds=remember(state.items,state.itemVaults,state.unlockedVaultIds){state.items.filter{it.deletedAt==0L&&(state.itemVaults[it.id].orEmpty().isEmpty()||state.itemVaults[it.id] in state.unlockedVaultIds)}.mapTo(hashSetOf()){it.id}}
+    val visible=rows.filter{it.id in allowedIds}
+    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+        if(query.isBlank()) {
+            item{LibraryUsageCard(state,onUpload)}
+            item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                listOf(Triple("All files","files",DriveIcons.Folder),Triple("Activity","activity",DriveIcons.SwapVert),Triple("Backups","backups",DriveIcons.Backup)).forEach { (title,route,icon) ->
+                    DriveCard(onClick={onOpen(route)},modifier=Modifier.weight(1f)) {
+                        Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically) {
+                            Icon(icon,null,Modifier.size(20.dp));Text(title,Modifier.weight(1f),style=MaterialTheme.typography.labelMedium)
+                        }
                     }
                 }
-            }
-        } }
-        item { Text("Suggested for you",style=MaterialTheme.typography.titleMedium) }
-        item {
-            if(state.rules.none { it.enabled }) ActionRow("Keep a folder backed up", "Choose a folder and review its backup rules", DriveIcons.Backup) { onOpen("backups") }
-            else ActionRow("Review your transfers", "Check progress and resume paused work", DriveIcons.SwapVert) { onOpen("activity") }
+            } }
         }
         item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-            Text("Recently uploaded",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
-            TextButton({onOpen("files")}) { Text("See all") }
+            Text(if(query.isBlank())"Recent uploads"else"Search results",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
+            if(query.isBlank())TextButton(onRecent){Text("See all")}
         } }
-        if(recent.isEmpty()) item { InfoCard("Your space is ready", "Add your first files. Your latest uploads will appear here.", DriveIcons.CloudUpload) }
-        items(recent,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,
+        if(visible.isEmpty())item{InfoCard(if(query.isBlank())"Your library starts here"else"No matching files",if(query.isBlank())"Add files to see them across Home, Gallery and Audio."else"Try another name, tag or word from extracted text.",DriveIcons.Folder)}
+        items(visible,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,
             onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
-        item { Spacer(Modifier.height(16.dp)) }
+        if(query.isBlank()&&state.rules.none{it.enabled})item{ActionRow("Back up a folder","Choose the folders you want to keep",DriveIcons.Backup){onOpen("backups")}}
     }
 }
 
 @Composable
-fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
+fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit,query:String="",selecting:Boolean=false,selected:Set<String> = emptySet(),onSelection:(Set<String>)->Unit={},onSelectMode:()->Unit={}) {
     var actionId by remember { mutableStateOf("") }
+    var kind by rememberSaveable{mutableStateOf("All")}
+    var move by remember{mutableStateOf(false)}
+    var trash by remember{mutableStateOf(false)}
     val media by produceState(emptyList<Item>(), state.items, state.versions, state.itemVaults, state.unlockedVaultIds, gallery, query) {
         value = withContext(Dispatchers.Default) { libraryCollection(state, if(gallery) "gallery" else "audio", query) }
     }
+    val visibleIds = state.items.filter { it.deletedAt==0L && (state.itemVaults[it.id].orEmpty().isEmpty() || state.itemVaults[it.id] in state.unlockedVaultIds) }.map{it.id}.toSet()
+    val shown=media.filter{it.id in visibleIds&&(!gallery||kind=="All"||kind=="Photos"&&it.mime.startsWith("image/")||kind=="Videos"&&it.mime.startsWith("video/"))}
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-            DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,placeholder={Text(if(gallery) "Search photos and videos" else "Search audio")},leadingIcon={Icon(DriveIcons.Search,null)})
-            Text("${media.size} files",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(gallery&&!selecting)Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{kind=label},label={Text(label)})}
         }
-        val visibleIds = state.items.filter { it.deletedAt==0L && (state.itemVaults[it.id].orEmpty().isEmpty() || state.itemVaults[it.id] in state.unlockedVaultIds) }.map{it.id}.toSet()
-        MediaContent(media.filter{it.id in visibleIds},gallery,bundle,onPreview,{actionId=it})
+        Text(if(gallery&&selecting)"${selected.size} selected"else"${shown.size} ${if(gallery)"photos and videos"else"audio files"}",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        LaunchedEffect(visibleIds){onSelection(selected.intersect(visibleIds))}
+        Box(Modifier.weight(1f)) {MediaContent(shown,gallery,bundle,{id->if(selecting)onSelection(if(id in selected)selected-id else selected+id)else onPreview(id)},{actionId=it},state=state,selected=selected,selecting=selecting,onLongSelect={id->onSelectMode();onSelection(selected+id)})}
+        if(gallery&&selecting) {
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                TextButton({onSelection(shown.map{it.id}.toSet())}){Text("Select all")}
+                TextButton({system.exportZip(selected.toList())},enabled=selected.isNotEmpty()){Text("Save ZIP")}
+                TextButton({move=true},enabled=selected.isNotEmpty()&&selected.map{state.itemVaults[it].orEmpty()}.distinct().size==1){Text("Move")}
+                TextButton({trash=true},enabled=selected.isNotEmpty()){Text("Trash (${selected.size})")}
+            }
+        }
     }
+    if(move)FolderPicker(state,"",{move=false},allowedVault=selected.firstOrNull()?.let{state.itemVaults[it].orEmpty()}){target->val ids=selected.toList();bundle.actions.run{bundle.actions.move(ids,target);onSelection(emptySet())};move=false}
+    if(trash)ConfirmDialog("Move ${selected.size} files to Trash?","You can restore them from Trash.","Move to Trash",{trash=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.trash(ids);onSelection(emptySet())};trash=false}
     state.items.firstOrNull { it.id == actionId }?.let { item ->
         FileActionsSheet(item,state,bundle,system,onDismiss={actionId=""},onPreview={actionId="";onPreview(item.id)})
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit) {
+internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit,state:LibraryState=LibraryState(),selected:Set<String> = emptySet(),selecting:Boolean=false,onLongSelect:(String)->Unit={}) {
     if(items.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp),contentAlignment=Alignment.Center) {
-        InfoCard(if(gallery) "No photos or videos" else "No audio files", "Upload files from Home, or try another search.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
+        InfoCard(if(gallery) "No photos or videos" else "No audio files", if(gallery)"Add photos and videos from Home to see them here."else"Add audio from Home, or try another search.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
     } else if(gallery) LazyVerticalGrid(GridCells.Adaptive(100.dp),Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp),
         horizontalArrangement=Arrangement.spacedBy(2.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
-        items(items,key={it.id}) { item ->
+        val dates=state.versions.associate{it.id to it.createdAt}
+        items.groupBy{DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(dates[it.versionId]?:it.createdAt))}.forEach{(date,group)->
+        item(span={GridItemSpan(maxLineSpan)}){Text("Uploaded $date",Modifier.padding(horizontal=16.dp,vertical=10.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        items(group,key={it.id}) { item ->
             androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().aspectRatio(4f/5f).background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .clickable(role=androidx.compose.ui.semantics.Role.Button,onClickLabel="Open ${item.name}"){onPreview(item.id)}
-                .semantics { contentDescription = item.name }) {
+                .combinedClickable(role=androidx.compose.ui.semantics.Role.Button,onClickLabel=if(selecting)"Select ${item.name}"else"Open ${item.name}",onClick={onPreview(item.id)},onLongClick={onLongSelect(item.id)},onLongClickLabel="Select file")
+                .semantics { contentDescription = item.name;this.selected=item.id in selected }) {
                 FileThumbnail(item,bundle,Modifier.fillMaxSize(),square=true)
+                if(selecting)Checkbox(item.id in selected,null,Modifier.align(Alignment.TopEnd))
                 if(item.mime.startsWith("video/")) Icon(DriveIcons.PlayCircle,"Video",Modifier.align(Alignment.BottomStart).padding(8.dp).size(20.dp).background(Color.Black.copy(alpha=.45f),DriveStyle.PillShape),tint=Color.White)
             }
         }
+        }
     } else LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        items(items,key={it.id}) { item -> NativeFileCard(item,null,false,false,false,onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
+        items(items,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
     }
 }

@@ -73,3 +73,11 @@ Saved-tab compatibility also verifies that serialized 0.3.0 tab values restore t
 ## 0.5 checks
 
 New cases cover the 4:5 gallery's accessible labels without visible filenames/menus, the adaptive header/account action, aspect-aware zoom bounds, server cooldown persistence and retry blocking, batched metadata/legacy decoding, metadata retry without content re-upload, bounded preparation, completion callbacks and preserving sibling records when deleting a shared metadata batch. Rendered previews are synthetic fixtures. Physical-device avatar refresh, photo gestures, video codecs/audio focus and live Telegram rate/throughput still require account/device acceptance.
+
+## 0.6 interface checks
+
+The native launch check now accesses accounts through the sign-in action. Compose cases cover header search/edit/clear, the absence of Gallery search/account-avatar actions, the seven visible settings destinations and removal of the three requested routes, gallery tile aspect/selection/long press, and current Home links. Pure cases verify indexed-usage exclusions and folder-picker descendant exclusion. The existing upload/cooldown/journal suite remains required.
+
+AudioArtworkTest uses native Android MediaMetadataRetriever against two original synthetic MP3 assets, with and without an embedded JPEG cover. These fixtures are test-only and contain no external song or personal image. DialogValidationTest checks that an invalid folder name remains in the native dialog and is not submitted. A Robolectric dialog synchronization limitation led to placing this interaction on the native emulator, preserving the assertions. No test signs into a real Telegram account.
+
+Local UI renders use synthetic state. Playback codecs, account avatars, real provider access, private vault gestures and physical-device frame timing still need on-device acceptance. Publishing retains the existing signature, ABI verification and signed-upgrade gate.

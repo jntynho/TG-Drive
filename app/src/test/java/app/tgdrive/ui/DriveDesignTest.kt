@@ -56,14 +56,11 @@ class DriveDesignTest {
 
     @Test fun everySettingsDestinationRemainsReachableInGroupedList() {
         var opened = ""
-        render { Column { DrivePageHeader("Settings", {}, close = true); SettingsHome(LibraryState()) { opened = it } } }
+        render { Column { DriveAppHeader("Settings",null,HeaderSearch("",{},"Search settings")); SettingsHome(LibraryState()) { opened = it } } }
         screenshot("settings")
         val destinations = linkedMapOf(
-            "Transfers and background" to "transfers", "Storage and offline" to "storage",
-            "Index and recovery" to "index", "Vaults and privacy" to "privacy",
-            "Optional connections" to "connections", "Organize by rules" to "organize",
-            "Resolve conflicts" to "conflicts", "Diagnostics" to "diagnostics",
-            "About and update identity" to "about",
+            "Telegram accounts" to "accounts", "Transfers" to "transfers", "Storage & offline" to "storage",
+            "Library & recovery" to "index", "Privacy & security" to "privacy", "Diagnostics" to "diagnostics", "About TG Drive" to "about",
         )
         destinations.forEach { (label, route) ->
             compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(label))
@@ -104,7 +101,7 @@ class DriveDesignTest {
         val video=photo.copy(id="video",name="Walk.mp4",mime="video/mp4",versionId="v2")
         var preview=""
         render { Column {
-            DriveAppHeader("Gallery",null,{},"",0,0)
+            DriveAppHeader("Gallery",null)
             MediaContent(listOf(photo,video),true,onPreview={preview=it},onMenu={error("No gallery tile menu")})
         } }
         val bounds=compose.onNodeWithContentDescription("Holiday.jpg").fetchSemanticsNode().boundsInRoot
@@ -117,13 +114,21 @@ class DriveDesignTest {
         assertEquals("video",preview)
         screenshot("gallery")
     }
-    @Test fun adaptiveHeaderExposesCurrentPageAndAccountAccess() {
-        var opened=false
-        render { DriveAppHeader("Audio",null,{opened=true},"A",1,0) }
+    @Test fun adaptiveHeaderSearchEditsQueryAndHasNoAccountAvatar() {
+        var value=""
+        render {var query by remember{mutableStateOf("")};DriveAppHeader("Audio",null,HeaderSearch(query,{query=it;value=it},"Search audio"))}
         compose.onNodeWithText("Audio").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Manage accounts").performClick()
-        assertTrue(opened)
-        compose.onNodeWithText("TG Drive").assertDoesNotExist()
+        compose.onNodeWithText("Search audio").performTextInput("Piano")
+        assertEquals("Piano",value)
+        compose.onNodeWithContentDescription("Clear search").performClick()
+        assertEquals("",value)
+        compose.onNodeWithContentDescription("Manage accounts").assertDoesNotExist()
+    }
+    @Test fun galleryHeaderHasNoSearchInputAndRemovedSettingsAreNotListed() {
+        render{Column{DriveAppHeader("Gallery",null);SettingsHome(LibraryState()) {}}}
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        listOf("Organize by rules","Resolve conflicts","Optional connections").forEach{compose.onNodeWithText(it).assertDoesNotExist()}
+        compose.onNodeWithText("Telegram accounts").assertIsDisplayed()
     }
 
     @Test fun homeKeepsLibraryActivityAndBackupsReachable() {
@@ -133,9 +138,23 @@ class DriveDesignTest {
             DriveNavigationBar(NativeTab.HOME,{})
         } }
         screenshot("home")
-        mapOf("Browse all files" to "files", "Activity" to "activity", "Backups" to "backups").forEach { (label,target) ->
+        mapOf("All files" to "files", "Activity" to "activity", "Backups" to "backups").forEach { (label,target) ->
             compose.onNodeWithText(label).performClick();assertEquals(target,route)
         }
+    }
+
+    @Test fun galleryLongPressStartsSelectionWithoutOpeningMedia() {
+        val photo=app.tgdrive.library.Item(id="photo",name="Holiday.jpg",mime="image/jpeg",versionId="v1")
+        var opened=false
+        render {
+            var selecting by remember{mutableStateOf(false)}
+            var selected by remember{mutableStateOf(emptySet<String>())}
+            MediaContent(listOf(photo),true,onPreview={if(selecting)selected=if(it in selected)selected-it else selected+it else opened=true},onMenu={},selected=selected,selecting=selecting,onLongSelect={selecting=true;selected=setOf(it)})
+        }
+        compose.onNodeWithContentDescription("Holiday.jpg").performTouchInput{longClick()}
+        assertFalse(opened)
+        compose.onNodeWithContentDescription("Holiday.jpg").assertIsSelected()
+        compose.onNodeWithContentDescription("Holiday.jpg").performClick().assertIsNotSelected()
     }
 
     @Test fun phoneSignInKeepsContinueDisabledUntilInputAndPassesNumberUnchanged() {

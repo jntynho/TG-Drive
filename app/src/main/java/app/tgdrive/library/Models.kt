@@ -87,6 +87,7 @@ data class LibraryState(
     val lastShare: ShareResult? = null,
     val healthProblems: List<String> = emptyList(),
     val sendCooldownUntil: Long = 0,
+    val undoTrashIds:List<String> = emptyList(),
     val itemVaults: Map<String, String> = emptyMap(), val folderVaults: Map<String, String> = emptyMap(),
     val shares: List<ShareResult> = emptyList(),
 )

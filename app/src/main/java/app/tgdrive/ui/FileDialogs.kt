@@ -15,17 +15,32 @@ import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.*
 
-@Composable fun TextInputDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,onConfirm:(String)->Unit){
+internal fun nameError(value:String):String?=runCatching{cleanName(value)}.exceptionOrNull()?.message
+
+@Composable fun TextInputDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,busy:Boolean=false,error:String?=null,validate:(String)->String?={null},onConfirm:(String)->Unit){
     var value by remember{mutableStateOf(initial)}
-    AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={DriveTextField(value,{value=it},label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())},confirmButton={TextButton(onClick={onConfirm(value)},enabled=value.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+    var inputError by remember{mutableStateOf<String?>(null)}
+    AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text(title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        DriveTextField(value,{value=it;inputError=null},enabled=!busy,label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())
+        if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+        (inputError?:error)?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
+    }},confirmButton={TextButton(onClick={inputError=validate(value);if(inputError==null)onConfirm(value)},enabled=value.isNotBlank()&&!busy){Text(if(busy)"Saving…"else"Save")}},dismissButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
 }
-@Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,onConfirm:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={Text(text,Modifier.verticalScroll(rememberScrollState()))},confirmButton={TextButton(onClick=onConfirm){Text(confirm)}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})}
-@Composable fun FolderPicker(state:LibraryState,current:String,onDismiss:()->Unit,onPick:(String)->Unit){
-    AlertDialog(onDismissRequest=onDismiss,title={Text("Choose destination")},text={LazyColumn(Modifier.heightIn(max=420.dp)){
-        item{TextButton(onClick={onPick("")}){Icon(DriveIcons.Home,null);Text("Home")}}
-        items(state.folders.filter{it.deletedAt==0L&&it.id!=current}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)}){Icon(DriveIcons.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
-    }},confirmButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+@Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,busy:Boolean=false,error:String?=null,onConfirm:()->Unit){
+    AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text(title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text(text);if(busy)LinearProgressIndicator(Modifier.fillMaxWidth());error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+    }},confirmButton={TextButton(onClick=onConfirm,enabled=!busy){Text(if(busy)"Working…"else confirm)}},dismissButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
+}
+@Composable fun FolderPicker(state:LibraryState,current:String,onDismiss:()->Unit,allowedVault:String?=null,excluded:Set<String> = emptySet(),busy:Boolean=false,error:String?=null,onPick:(String)->Unit){
+    AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text("Choose destination")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        if(busy)LinearProgressIndicator(Modifier.fillMaxWidth());error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+        LazyColumn(Modifier.heightIn(max=420.dp)){
+            item{TextButton(onClick={onPick("")},enabled=!busy){Icon(DriveIcons.Home,null);Text("Home")}}
+            items(state.folders.filter{it.deletedAt==0L&&it.id!=current&&it.id !in excluded&&(allowedVault==null||state.folderVaults[it.id].orEmpty()==allowedVault)}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)},enabled=!busy){Icon(DriveIcons.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
+        }
+    }},confirmButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun FilterSheet(type:String,minimum:Long,days:Int,order:String,onDismiss:()->Unit,onApply:(String,Long,Int,String)->Unit){
@@ -43,8 +58,8 @@ import java.util.Date
 @Composable fun FolderActionsDialog(folder:Folder,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
     var mode by remember{mutableStateOf("actions")}
     when(mode){
-        "rename"->TextInputDialog("Rename folder","Name",folder.name,onDismiss){name->bundle.actions.run{bundle.library.updateFolder(folder.copy(name=cleanName(name)))};onDismiss()}
-        "move"->FolderPicker(state,folder.id,onDismiss){id->bundle.actions.run{bundle.library.updateFolder(folder.copy(parentId=id))};onDismiss()}
+        "rename"->TextInputDialog("Rename folder","Name",folder.name,onDismiss,validate=::nameError){name->bundle.actions.run{bundle.library.updateFolder(folder.copy(name=cleanName(name)))};onDismiss()}
+        "move"->FolderPicker(state,folder.id,onDismiss,allowedVault=state.folderVaults[folder.id].orEmpty(),excluded=folderDescendants(folder.id,state.folders)){id->bundle.actions.run{bundle.library.updateFolder(folder.copy(parentId=id))};onDismiss()}
         "remove"->ConfirmDialog("Remove folder?","Only an empty folder can be removed. Files are not automatically deleted.","Remove",onDismiss){bundle.actions.run{
             require(state.items.none{it.folderId==folder.id&&it.deletedAt==0L}&&state.folders.none{it.parentId==folder.id&&it.deletedAt==0L}){"Move files and subfolders before removing this folder."}
             bundle.library.updateFolder(folder.copy(deletedAt=now()))
@@ -55,16 +70,26 @@ import java.util.Date
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun FileActionsSheet(item:Item,state:LibraryState,bundle:SessionBundle,system:SystemActions,onDismiss:()->Unit,onPreview:()->Unit){
     var mode by remember{mutableStateOf("menu")}
-    fun perform(block:suspend()->Unit){bundle.actions.run(block);onDismiss()}
+    var more by remember{mutableStateOf(false)}
+    var busy by remember{mutableStateOf(false)}
+    var error by remember{mutableStateOf<String?>(null)}
+    val ui=rememberCoroutineScope()
+    fun perform(block:suspend()->Unit){
+        if(busy)return
+        busy=true;error=null
+        val account=state.accountId
+        ui.launch{try{withContext(Dispatchers.IO){bundle.library.checkAccount(account);block()};onDismiss()}
+            catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not save changes.";bundle.library.report(e)}finally{busy=false}}
+    }
     when(mode){
-        "rename"->TextInputDialog("Rename file","File name",item.name,onDismiss){v->perform{bundle.actions.rename(item.id,v)}}
-        "tags"->TextInputDialog("Edit tags","Comma-separated tags",item.tags.joinToString(", "),onDismiss){v->perform{bundle.actions.tags(item.id,v)}}
-        "move"->FolderPicker(state,item.folderId,onDismiss){target->perform{bundle.actions.move(listOf(item.id),target)}}
-        "trash"->ConfirmDialog("Move to Trash?","The original Telegram message is retained until permanent deletion or retention cleanup.","Move to Trash",onDismiss){perform{bundle.actions.trash(listOf(item.id))}}
-        "purge"->ConfirmDialog("Delete permanently?","Original Telegram messages and all versions will be deleted, including an imported original. This cannot be undone.","Delete permanently",onDismiss){perform{bundle.actions.purge(listOf(item.id))}}
+        "rename"->TextInputDialog("Rename file","File name",item.name,onDismiss,busy,error,validate=::nameError){v->perform{bundle.actions.rename(item.id,v)}}
+        "tags"->TextInputDialog("Edit tags","Comma-separated tags",item.tags.joinToString(", "),onDismiss,busy,error){v->perform{bundle.actions.tags(item.id,v)}}
+        "move"->FolderPicker(state,item.folderId,onDismiss,allowedVault=state.itemVaults[item.id].orEmpty(),busy=busy,error=error){target->perform{bundle.actions.move(listOf(item.id),target)}}
+        "trash"->ConfirmDialog("Move to Trash?","The original Telegram message is retained until permanent deletion or retention cleanup.","Move to Trash",onDismiss,busy=busy,error=error){perform{bundle.actions.trash(listOf(item.id))}}
+        "purge"->ConfirmDialog("Delete permanently?","Original Telegram messages and all versions will be deleted, including an imported original. This cannot be undone.","Delete permanently",onDismiss,busy=busy,error=error){perform{bundle.actions.purge(listOf(item.id))}}
         "versions"->VersionSheet(item,state,bundle,onDismiss)
         "share"->PublicShareDialog(item,state,bundle,onDismiss,system.startTransfers)
-        "webdav"->ConfirmDialog("Export to WebDAV?","This uploads a separate, decrypted copy to your configured server, then downloads it to verify its checksum. It consumes network data.","Export copy",onDismiss){perform{bundle.transfers.enqueue(TaskKind.WEBDAV,item);system.startTransfers()}}
+        "webdav"->ConfirmDialog("Export to WebDAV?","This uploads a separate, decrypted copy to your configured server, then downloads it to verify its checksum. It consumes network data.","Export copy",onDismiss,busy=busy,error=error){perform{bundle.transfers.enqueue(TaskKind.WEBDAV,item);system.startTransfers()}}
         "info"->AlertDialog(onDismissRequest=onDismiss,title={Text("File details")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text(item.name);Text("${formatBytes(item.size)} · ${item.mime}");Text("Version: ${item.versionId}",style=MaterialTheme.typography.bodySmall)
             Text(if(item.sha256.isEmpty())"Original checksum unavailable for this imported or legacy document." else "Original SHA-256:")
@@ -72,20 +97,25 @@ import java.util.Date
             Text(if(state.local[item.id]?.verifiedVersion==item.versionId&&item.sha256.isNotEmpty())"Downloaded content was verified against the original checksum." else "An uploaded/indexed reference is not the same as a fully verified downloaded copy.",style=MaterialTheme.typography.bodySmall)
             Text(if(state.itemVaults[item.id].orEmpty().isEmpty())"Telegram cloud storage is not end-to-end encrypted by this app for this file." else "Content and metadata belong to an encrypted vault.",style=MaterialTheme.typography.bodySmall)
         }},confirmButton={TextButton(onClick=onDismiss){Text("Done")}})
-        else->ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().heightIn(max=650.dp).verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        else->ModalBottomSheet(onDismissRequest={if(!busy)onDismiss()}){Column(Modifier.fillMaxWidth().heightIn(max=650.dp).verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text(item.name,style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
             if(item.deletedAt>0){
                 ActionRow("Restore",icon=DriveIcons.Restore){perform{bundle.actions.restore(listOf(item.id))}}
                 ActionRow("Delete permanently",icon=DriveIcons.DeleteForever){mode="purge"}
             }else{
                 DriveGroup {
-                ActionRow("Preview",icon=fileIcon(item.mime),onClick=onPreview)
                 ActionRow("Save to device",icon=DriveIcons.Download){onDismiss();system.save(item)}
                 ActionRow("Share a copy",icon=DriveIcons.Share){onDismiss();system.shareExternal(item)}
                 ActionRow(if(item.favorite)"Remove from favorites" else "Add to favorites",icon=DriveIcons.StarOutline){perform{bundle.actions.favorite(item.id)}}
                 }
                 DriveGroup {
                 ActionRow(if(state.local[item.id]?.pinnedVersion==item.versionId)"Remove offline copy" else "Keep offline",icon=DriveIcons.OfflinePin){perform{if(state.local[item.id]?.pinnedVersion==item.versionId)bundle.actions.unpin(item.id) else {bundle.transfers.enqueue(TaskKind.PIN,item);system.startTransfers()}}}
+                }
+                TextButton({more=!more}){Text(if(more)"Fewer options"else"More options")}
+                if(more) {
+                DriveGroup {
                 ActionRow("Verify downloaded content",icon=DriveIcons.Verified){perform{bundle.transfers.enqueue(TaskKind.VERIFY,item);system.startTransfers()}}
                 }
                 DriveGroup {
@@ -97,8 +127,9 @@ import java.util.Date
                 }
                 DriveGroup {
                 if(item.mime.startsWith("image/")||item.mime=="application/pdf")ActionRow("Extract text on this device","Latin text · up to 50 PDF pages",DriveIcons.DocumentScanner){perform{bundle.transfers.enqueue(TaskKind.OCR,item);system.startTransfers()}}
-                ActionRow("Create public copy link","Requires your optional sharing server",DriveIcons.Link){mode="share"}
-                ActionRow("Copy to WebDAV","Requires your optional HTTPS endpoint",DriveIcons.CloudUpload){mode="webdav"}
+                if(state.preferences.sharingUrl.isNotBlank())ActionRow("Create public copy link","Requires your optional sharing server",DriveIcons.Link){mode="share"}
+                if(state.preferences.webDavUrl.isNotBlank())ActionRow("Copy to WebDAV","Requires your optional HTTPS endpoint",DriveIcons.CloudUpload){mode="webdav"}
+                }
                 }
                 ActionRow("Move to Trash",icon=DriveIcons.DeleteOutline){mode="trash"}
             }
@@ -135,4 +166,10 @@ import java.util.Date
             Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column(Modifier.weight(1f)){Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
         }}}
     }}
+}
+
+internal fun folderDescendants(id:String,folders:List<Folder>):Set<String> {
+    val found=mutableSetOf(id);var changed=true
+    while(changed){changed=false;folders.forEach{if(it.parentId in found&&found.add(it.id))changed=true}}
+    return found
 }

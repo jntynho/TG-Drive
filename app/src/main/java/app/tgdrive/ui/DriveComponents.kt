@@ -55,7 +55,7 @@ fun DriveAssistChip(onClick: () -> Unit, label: @Composable () -> Unit, leadingI
 @Composable
 fun DriveButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
     Button(onClick, modifier.heightIn(min = 52.dp), enabled = enabled, shape = DriveStyle.PillShape,
-        colors = ButtonDefaults.buttonColors(disabledContainerColor = Color(0xFF123552), disabledContentColor = Color(0xFF8A9AA8)),
+        colors = ButtonDefaults.buttonColors(containerColor=Color(0xFF0068D9),contentColor=Color.White,disabledContainerColor = Color(0xFF123552), disabledContentColor = Color(0xFF8A9AA8)),
         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp), content = content)
 }
 
@@ -75,11 +75,12 @@ fun DriveTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     singleLine: Boolean = false, shape: Shape = DriveStyle.CardShape,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions = androidx.compose.foundation.text.KeyboardActions.Default,
 ) {
     OutlinedTextField(value, onValueChange, modifier.heightIn(min = 56.dp), enabled = enabled,
         textStyle = MaterialTheme.typography.bodyLarge, label = label, placeholder = placeholder,
         leadingIcon = leadingIcon, trailingIcon = trailingIcon, visualTransformation = visualTransformation,
-        keyboardOptions = keyboardOptions, singleLine = singleLine, shape = shape,
+        keyboardOptions = keyboardOptions, keyboardActions=keyboardActions, singleLine = singleLine, shape = shape,
         colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -131,7 +132,7 @@ fun DriveDivider() {
 /** Reference proportions: a wide capsule thumb inside a 64 × 28 dp track. */
 @Composable
 fun DriveSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier) {
-    val track by animateColorAsState(if(checked) MaterialTheme.colorScheme.primary else Color(0xFFA7AAAE), tween(140), label="switch-track")
+    val track by animateColorAsState(if(checked) Color(0xFF0085FF) else Color(0xFFA7AAAE), tween(140), label="switch-track")
     val thumb by animateColorAsState(if(checked) Color.White else Color(0xFF111111), tween(140), label="switch-thumb")
     val offset by animateDpAsState(if(checked) 22.dp else 2.dp, tween(140), label="switch-position")
     val touch = if(onCheckedChange != null) Modifier.toggleable(checked, role=Role.Switch, onValueChange=onCheckedChange) else Modifier

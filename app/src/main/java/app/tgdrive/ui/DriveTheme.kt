@@ -15,7 +15,7 @@ object DriveStyle {
     val Canvas = Color(0xFF1E1E1E)
     val SignInCanvas = Color(0xFF050505)
     val Card = Color(0xFF333536)
-    val Blue = Color(0xFF0085FF)
+    val Blue = Color(0xFF73B2FF)
     val PageInset = 16.dp
     val CardShape = RoundedCornerShape(24.dp)
     val PillShape = RoundedCornerShape(50)
@@ -24,7 +24,7 @@ object DriveStyle {
 }
 
 private val DriveColors = darkColorScheme(
-    primary = DriveStyle.Blue, onPrimary = Color.White,
+    primary = DriveStyle.Blue, onPrimary = Color(0xFF071D36),
     primaryContainer = Color(0xFF123E65), onPrimaryContainer = Color(0xFFD6EBFF),
     inversePrimary = Color(0xFF0067CE),
     secondary = Color(0xFFB4B8BC), onSecondary = Color(0xFF161718),

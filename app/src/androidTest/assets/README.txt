@@ -1,0 +1,1 @@
+Synthetic 0.2 second 440 Hz test tones generated with FFmpeg. The attached cover is original TG Drive Folded Cloud artwork from docs/brand. No third-party song or artwork is used. These files are only included in the instrumentation test APK.

@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.tgdrive.ui
 
 import androidx.compose.animation.AnimatedVisibility
@@ -28,9 +30,9 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class,ExperimentalFoundationApi::class)
 @Composable
-fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,onPreview:(String)->Unit,onTitle:(String)->Unit={},onFolderBack:((()->Unit)?)->Unit={}) {
+fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,onPreview:(String)->Unit,onTitle:(String)->Unit={},onFolderBack:((()->Unit)?)->Unit={},query:String="",onFilters:((()->Unit)->Unit)={},recentView:Boolean=false,addRequested:Boolean=false,onAddConsumed:()->Unit={}) {
     var folder by rememberSaveable { mutableStateOf("") };var vault by rememberSaveable { mutableStateOf("") }
-    var query by rememberSaveable { mutableStateOf("") };var collection by rememberSaveable { mutableStateOf("All") }
+    var collection by rememberSaveable { mutableStateOf("All") }
     var type by rememberSaveable { mutableStateOf("all") };var minimum by rememberSaveable { mutableLongStateOf(0) }
     var days by rememberSaveable { mutableIntStateOf(0) };var order by rememberSaveable { mutableStateOf("Newest") }
     var selected by remember { mutableStateOf(setOf<String>()) }
@@ -38,24 +40,26 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     var actionId by remember { mutableStateOf("") };var folderAction by remember { mutableStateOf<Folder?>(null) }
     var newFolder by remember { mutableStateOf(false) };var moveSelection by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) };var confirmPurge by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit){onFilters{filterSheet=true}}
+    LaunchedEffect(addRequested){if(addRequested){addSheet=true;onAddConsumed()}}
     val current = state.folders.firstOrNull{it.id==folder}
-    LaunchedEffect(folder,current?.name){onTitle(if(folder.isEmpty())"All files" else current?.name?:"Folder")}
-    LaunchedEffect(folder,current?.parentId){onFolderBack(if(folder.isEmpty())null else ({folder=current?.parentId?:""}))}
+    LaunchedEffect(folder,current?.name,recentView){onTitle(if(recentView)"Recent uploads"else if(folder.isEmpty())"All files" else current?.name?:"Folder")}
+    LaunchedEffect(folder,current?.parentId,selected){onFolderBack(if(selected.isNotEmpty())({selected=emptySet()})else if(folder.isEmpty())null else ({folder=current?.parentId?:""}))}
     BackHandler(enabled=folder.isNotEmpty()||selected.isNotEmpty()){if(selected.isNotEmpty())selected=emptySet() else folder=current?.parentId?:""}
     LaunchedEffect(state.items) { selected=selected.filter{ id->state.items.any{it.id==id} }.toSet() }
-    val visible by produceState(emptyList<Item>(),state.items,state.local,folder,vault,query,collection,type,minimum,days,order){
+    val visible by produceState(emptyList<Item>(),state.items,state.local,folder,vault,query,collection,type,minimum,days,order,recentView,state.unlockedVaultIds){
         value=withContext(Dispatchers.Default){
             state.items.filter { item->
-                item.versionId.isNotEmpty() && (if(collection=="Trash")item.deletedAt>0 else item.deletedAt==0L) &&
+                item.versionId.isNotEmpty() && (state.itemVaults[item.id].orEmpty().isEmpty()||state.itemVaults[item.id] in state.unlockedVaultIds) && (if(collection=="Trash")item.deletedAt>0 else item.deletedAt==0L) &&
                     (collection!="Favorites"||item.favorite) && (collection!="Offline"||state.local[item.id]?.pinnedVersion==item.versionId) &&
-                    (query.isNotBlank()||collection!="All"||(item.folderId==folder&&state.itemVaults[item.id].orEmpty()==vault)) &&
+                    (recentView||query.isNotBlank()||collection!="All"||(item.folderId==folder&&state.itemVaults[item.id].orEmpty()==vault)) &&
                     (query.isBlank()||(item.name+" "+item.tags.joinToString(" ")+" "+state.local[item.id]?.ocrText.orEmpty()).contains(query.trim(),true)) &&
                     (type=="all"||(type=="document"&&!item.mime.startsWith("image/")&&!item.mime.startsWith("video/")&&!item.mime.startsWith("audio/"))||item.mime.startsWith("$type/")) &&
                     item.size>=minimum && (days==0||item.createdAt>=now()-days*86_400_000L)
             }.let { rows->when(order){"Name"->rows.sortedBy{it.name.lowercase()};"Largest"->rows.sortedByDescending{it.size};else->rows.sortedByDescending{it.createdAt}} }
         }
     }
-    val folders=remember(state.folders,folder,vault,query,collection){state.folders.filter{it.parentId==folder&&it.deletedAt==0L&&state.folderVaults[it.id].orEmpty()==vault&&collection=="All"&&query.isBlank()}.sortedBy{it.name.lowercase()}}
+    val folders=remember(state.folders,folder,vault,query,collection,recentView){state.folders.filter{it.parentId==folder&&it.deletedAt==0L&&state.folderVaults[it.id].orEmpty()==vault&&collection=="All"&&query.isBlank()&&!recentView}.sortedBy{it.name.lowercase()}}
     Box(Modifier.fillMaxSize()){
         LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=160.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
             if(folder.isNotEmpty()) item {Text(folderPath(folder,state.folders),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
@@ -64,7 +68,7 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
                 MiniStat(formatBytes(state.items.filter{it.deletedAt==0L}.sumOf{it.size}),"Indexed content",Modifier.weight(1f))
             }}
             if(state.pendingOperations>0)item {InfoCard("Metadata waiting to sync","${state.pendingOperations} changes are saved on this phone. Your original files remain in Telegram.",DriveIcons.CloudSync)}
-            item {DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=DriveStyle.CardShape,placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(DriveIcons.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(DriveIcons.Tune,"Search filters")}})}
+
             item {LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 items(listOf("All","Favorites","Offline","Trash")){label->DriveFilterChip(collection==label,{collection=label;selected=emptySet()},label={Text(label)})}
                 item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.updatePreferences{it.copy(showGrid=value)}}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)DriveIcons.ViewList else DriveIcons.GridView,null,Modifier.size(18.dp))})}
@@ -100,7 +104,7 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             Surface(color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(topStart=24.dp,topEnd=24.dp)){
                 Column(Modifier.fillMaxWidth().padding(12.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={selected=emptySet()}){Icon(DriveIcons.Close,"Clear selection")};Text("${selected.size} selected",Modifier.weight(1f));TextButton(onClick={selected=visible.map{it.id}.toSet()}){Text("Select all")}}
-                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
+                    androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
                         TextButton(onClick={system.exportZip(selected.toList())}){Text("Save ZIP")}
                         TextButton(onClick={moveSelection=true}){Text("Move")}
                         if(collection=="Trash"){
@@ -120,10 +124,10 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
         ActionRow("Import Saved Messages","Choose existing documents without rewriting their captions",DriveIcons.MoveToInbox){addSheet=false;bundle.actions.run{bundle.library.sync(full=true,collectImports=true)}}
         Spacer(Modifier.height(12.dp))
     }}
-    if(newFolder)TextInputDialog("New folder","Folder name",onDismiss={newFolder=false}){name->bundle.actions.run{bundle.library.createFolder(name,folder,vault)};newFolder=false}
-    if(moveSelection)FolderPicker(state,folder,onDismiss={moveSelection=false}){target->val ids=selected.toList();bundle.actions.run{bundle.actions.move(ids,target)};selected=emptySet();moveSelection=false}
-    if(confirmTrash)ConfirmDialog("Move ${selected.size} files to Trash?","Original messages are retained until permanent deletion or the configured retention cleanup.","Move to Trash",{confirmTrash=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.trash(ids)};selected=emptySet();confirmTrash=false}
-    if(confirmPurge)ConfirmDialog("Delete permanently?","All content versions and original Telegram messages, including imported documents, will be deleted. Downloaded copies elsewhere cannot be recalled.","Delete permanently",{confirmPurge=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.purge(ids)};selected=emptySet();confirmPurge=false}
+    if(newFolder)TextInputDialog("New folder","Folder name",onDismiss={newFolder=false},validate=::nameError){name->bundle.actions.run{bundle.library.createFolder(name,folder,vault)};newFolder=false}
+    if(moveSelection)FolderPicker(state,folder,onDismiss={moveSelection=false},allowedVault=selected.firstOrNull()?.let{state.itemVaults[it].orEmpty()}){target->val ids=selected.toList();bundle.actions.run{bundle.actions.move(ids,target);withContext(Dispatchers.Main){selected=emptySet();moveSelection=false}}}
+    if(confirmTrash)ConfirmDialog("Move ${selected.size} files to Trash?","Original messages are retained until permanent deletion or the configured retention cleanup.","Move to Trash",{confirmTrash=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.trash(ids);withContext(Dispatchers.Main){selected=emptySet()}};confirmTrash=false}
+    if(confirmPurge)ConfirmDialog("Delete permanently?","All content versions and original Telegram messages, including imported documents, will be deleted. Downloaded copies elsewhere cannot be recalled.","Delete permanently",{confirmPurge=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.purge(ids);withContext(Dispatchers.Main){selected=emptySet()}};confirmPurge=false}
     state.items.firstOrNull{it.id==actionId}?.let{item->FileActionsSheet(item,state,bundle,system,onDismiss={actionId=""},onPreview={actionId="";onPreview(item.id)})}
     folderAction?.let{f->FolderActionsDialog(f,state,bundle,onDismiss={folderAction=null})}
     if(filterSheet)FilterSheet(type,minimum,days,order,onDismiss={filterSheet=false}){t,m,d,o->type=t;minimum=m;days=d;order=o;filterSheet=false}
@@ -150,21 +154,35 @@ fun folderPath(id:String,folders:List<Folder>):String {
         }
     }
 }
-@Composable private fun FileIndicators(item:Item,local:LocalItem?,encrypted:Boolean){Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-    if(item.favorite)Icon(DriveIcons.Star,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
-    if(encrypted)Icon(DriveIcons.Lock,null,Modifier.size(14.dp))
-    if(local?.pinnedVersion==item.versionId)Icon(DriveIcons.OfflinePin,null,Modifier.size(14.dp))
-    if(local?.verifiedVersion==item.versionId&&item.sha256.isNotEmpty())Icon(DriveIcons.Verified,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
+@Composable private fun FileIndicators(item:Item,local:LocalItem?,encrypted:Boolean){FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+    if(item.favorite)Icon(DriveIcons.Star,"Favorite",Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
+    if(encrypted)Icon(DriveIcons.Lock,"Encrypted vault file",Modifier.size(14.dp))
+    if(local?.pinnedVersion==item.versionId)Icon(DriveIcons.OfflinePin,"Available offline",Modifier.size(14.dp))
+    if(local?.verifiedVersion==item.versionId&&item.sha256.isNotEmpty())Icon(DriveIcons.Verified,"Verified download",Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
     if(local?.missing==true)Text("Reference unavailable",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
     if(item.tags.isNotEmpty())Text(item.tags.take(2).joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
 }}
 fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.startsWith("video/")->DriveIcons.Videocam;mime.startsWith("audio/")->DriveIcons.AudioFile;mime=="application/pdf"->DriveIcons.PictureAsPdf;else->DriveIcons.InsertDriveFile}
 
 @Composable fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier,square:Boolean=false) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null,item.id,item.versionId,bundle) {
-        if(bundle!=null)value=try{ThumbnailTools(bundle.library).read(item)}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){null}
+    var retry by remember(item.id,item.versionId){mutableIntStateOf(0)}
+    var failed by remember(item.id,item.versionId){mutableStateOf(false)}
+    var loading by remember(item.id,item.versionId){mutableStateOf(bundle!=null)}
+    val network=if(bundle!=null)bundle.drive.state.collectAsState().value.network else app.tgdrive.data.TelegramNetwork.UNKNOWN
+    LaunchedEffect(network){if(network==app.tgdrive.data.TelegramNetwork.READY&&failed&&retry<2)retry++}
+    val bitmap by produceState<android.graphics.Bitmap?>(null,item.id,item.versionId,bundle,retry) {
+        failed=false;loading=bundle!=null
+        try {if(bundle!=null)value=ThumbnailTools(bundle.library).read(item)}
+        catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){failed=true}
+        finally{loading=false}
     }
     val thumb=bitmap
     if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,if(square)modifier else modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
-    else Box(modifier,contentAlignment=Alignment.Center) { Icon(fileIcon(item.mime),null,Modifier.size(36.dp),tint=MaterialTheme.colorScheme.primary) }
+    else Box(modifier,contentAlignment=Alignment.Center) {
+        when {
+            loading->CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)
+            failed&&!square->IconButton({retry++}){Icon(DriveIcons.Refresh,"Retry preview",tint=MaterialTheme.colorScheme.onSurfaceVariant)}
+            else->Icon(fileIcon(item.mime),if(failed)"Preview unavailable"else null,Modifier.size(32.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

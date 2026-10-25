@@ -29,6 +29,15 @@ class ThumbnailTools(private val repository: LibraryRepository) {
                 if(android.os.Build.VERSION.SDK_INT>=27)retriever.getScaledFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,320,320)?:return@withContext null else return@withContext null
                 } finally { retriever.release() }
             }
+            mime.startsWith("audio/") -> {
+                val retriever=MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(repository.context,uri)
+                    val picture=retriever.embeddedPicture?:return@withContext null
+                    if(picture.size>16*1024*1024)return@withContext null
+                    decodeBounded(picture)?:return@withContext null
+                } finally {retriever.release()}
+            }
             mime=="application/pdf" -> resolver.openFileDescriptor(uri,"r")?.use{fd->PdfRenderer(fd).use{pdf->
                 if(pdf.pageCount==0)return@withContext null
                 pdf.openPage(0).use{page->
@@ -43,6 +52,33 @@ class ThumbnailTools(private val repository: LibraryRepository) {
     suspend fun read(item: Item): Bitmap? = withContext(Dispatchers.IO) {
         val version=repository.version(item.versionId)
         val part=version.thumbnail
+        val vault=repository.itemVault(item.id)
+        if(part==null && item.mime.startsWith("audio/")) {
+            repository.cache!!.lease(version.id).use {
+                check(repository.vaults.isUnlocked(vault))
+                val local=repository.cache!!.plaintextPath(item)
+                val original=repository.state.value.local[item.id]?.sourceUri.orEmpty()
+                val candidates=buildList {
+                    if(local.exists()&&local.length()==item.size)add(Uri.fromFile(local))
+                    if(original.isNotBlank()&&item.sha256.isNotBlank()&&item.size<=32L*1024*1024) {
+                        val sourceUri=Uri.parse(original)
+                        val verified=try {
+                            repository.context.contentResolver.openInputStream(sourceUri)?.use{input->
+                                val digest=java.security.MessageDigest.getInstance("SHA-256");val buffer=ByteArray(64*1024);var count=0L
+                                while(true){currentCoroutineContext().ensureActive();val n=input.read(buffer);if(n<0)break;count+=n;if(count>32L*1024*1024)break;digest.update(buffer,0,n)}
+                                count==item.size&&digest.digest().joinToString(""){"%02x".format(it)}==item.sha256
+                            }?:false
+                        }catch(e:CancellationException){throw e}catch(_:Exception){false}
+                        if(verified)add(sourceUri)
+                    }
+                }
+                for(uri in candidates) {
+                    val bytes=try{create(uri,item.mime)}catch(e:CancellationException){throw e}catch(_:Exception){null}
+                    ensureActive();check(repository.vaults.isUnlocked(vault))
+                    if(bytes!=null)return@withContext decodeBounded(bytes)
+                }
+            }
+        }
         if(part == null) {
             // Imported/older documents may have Telegram's own small preview. Never fetch
             // the original photo or video just to populate a scrolling gallery.
@@ -59,7 +95,6 @@ class ThumbnailTools(private val repository: LibraryRepository) {
             return@withContext decodeBounded(file.readBytes())
         }
         require(part.storedSize in 1..524_400)
-        val vault=repository.itemVault(item.id)
         repository.cache!!.lease(version.id).use {
             val raw=repository.cache!!.raw(version,part)
             val bytes=if(part.encrypted)ByteArrayOutputStream().also{out->raw.inputStream().use{repository.vaults.decrypt(vault,CheckedInput(it,currentCoroutineContext()[Job]){repository.vaults.isUnlocked(vault)},out,"${item.id}/${version.id}/-1")}}.toByteArray() else raw.readBytes()
@@ -67,7 +102,7 @@ class ThumbnailTools(private val repository: LibraryRepository) {
             decodeBounded(bytes)
         }
     }
-    private fun decodeBounded(bytes: ByteArray): Bitmap? {
+    internal fun decodeBounded(bytes: ByteArray): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
         if(bounds.outWidth <= 0 || bounds.outHeight <= 0) return null

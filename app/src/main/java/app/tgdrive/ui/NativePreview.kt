@@ -9,7 +9,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -44,19 +46,11 @@ import kotlinx.coroutines.*
 import java.io.File
 import kotlin.math.min
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable fun NativePreview(item:Item,bundle:SessionBundle,system:SystemActions,onBack:()->Unit){
-    DisposableEffect(item.versionId) { val lease=bundle.library.cache!!.lease(item.versionId); onDispose{lease.close()} }
-    val isMedia=item.mime.startsWith("video/")||item.mime.startsWith("audio/")
-    val isPhoto=item.mime.startsWith("image/")
-    val visual=isPhoto||item.mime.startsWith("video/")
-    var file by remember(item.versionId){mutableStateOf<File?>(null)}
-    var error by remember(item.versionId){mutableStateOf<String?>(null)}
-    var editText by remember(item.versionId){mutableStateOf(false)}
-    var menu by remember(item.versionId){mutableStateOf(false)}
-    var chrome by remember(item.versionId){mutableStateOf(true)}
-    var retry by remember(item.versionId){mutableIntStateOf(0)}
-    val state by bundle.library.state.collectAsState()
+@Composable fun NativePreview(item:Item,bundle:SessionBundle,system:SystemActions,onBack:()->Unit,snackbar:SnackbarHostState=remember{SnackbarHostState()},gallery:List<Item> = emptyList(),onNavigate:(String)->Unit={}) {
+    val pages=if(gallery.any{it.id==item.id})gallery else listOf(item)
+    val pager=rememberPagerState(initialPage=pages.indexOfFirst{it.id==item.id}.coerceAtLeast(0),pageCount={pages.size})
+    var chrome by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(true)}
+    val visual=pages.getOrNull(pager.settledPage)?.mime?.let{it.startsWith("image/")||it.startsWith("video/")}==true
     val context=LocalContext.current
     val activity=context as? android.app.Activity
     DisposableEffect(activity,visual,chrome) {
@@ -65,8 +59,29 @@ import kotlin.math.min
         else controller?.show(WindowInsetsCompat.Type.systemBars())
         onDispose {controller?.show(WindowInsetsCompat.Type.systemBars())}
     }
-    BackHandler(!chrome) {chrome=true}
-    LaunchedEffect(item.versionId,retry){
+    var zoomed by remember{mutableStateOf(false)}
+    val currentNavigate by rememberUpdatedState(onNavigate)
+    LaunchedEffect(pager.settledPage,pages){pages.getOrNull(pager.settledPage)?.let{if(it.id!=item.id)currentNavigate(it.id)}}
+    HorizontalPager(pager,userScrollEnabled=!zoomed,modifier=Modifier.fillMaxSize(),key={pages[it].id}){index->
+        val active=index==pager.settledPage
+        NativePreviewPage(pages[index],bundle,system,onBack,snackbar,active,"${index+1} / ${pages.size}",{value->if(active)zoomed=value},chrome,{chrome=it})
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun NativePreviewPage(item:Item,bundle:SessionBundle,system:SystemActions,onBack:()->Unit,snackbar:SnackbarHostState,active:Boolean,counter:String,onZoom:(Boolean)->Unit,chrome:Boolean,onChrome:(Boolean)->Unit){
+    DisposableEffect(item.versionId) { val lease=bundle.library.cache!!.lease(item.versionId); onDispose{lease.close()} }
+    val isMedia=item.mime.startsWith("video/")||item.mime.startsWith("audio/")
+    val isPhoto=item.mime.startsWith("image/")
+    val visual=isPhoto||item.mime.startsWith("video/")
+    var file by remember(item.versionId){mutableStateOf<File?>(null)}
+    var error by remember(item.versionId){mutableStateOf<String?>(null)}
+    var editText by remember(item.versionId){mutableStateOf(false)}
+    var menu by remember(item.versionId){mutableStateOf(false)}
+    var retry by remember(item.versionId){mutableIntStateOf(0)}
+    val state by bundle.library.state.collectAsState()
+    LaunchedEffect(item.versionId,retry,active){
+        if(!active)return@LaunchedEffect
         error=null;file=null
         if(isMedia) {if(item.mime.startsWith("audio/"))system.play(item)}
         else try {
@@ -76,26 +91,27 @@ import kotlin.math.min
         } catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not open this file."}
     }
     val toolbar: @Composable ()->Unit = {
-        TopAppBar(title={Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall)},
+        TopAppBar(title={Column{Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);if(counter!="1 / 1")Text(counter,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}},
             navigationIcon={DriveCircleButton(DriveIcons.ArrowBack,"Back",onBack,Modifier.padding(start=8.dp))},
             actions={
-                if(visual)IconButton({chrome=false}){Icon(DriveIcons.Fullscreen,"Full screen")}
+                if(visual)IconButton({onChrome(false)}){Icon(DriveIcons.Fullscreen,"Full screen")}
                 IconButton({menu=true}){Icon(DriveIcons.MoreHoriz,"File actions")}
             },colors=TopAppBarDefaults.topAppBarColors(containerColor=if(visual)androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background))
     }
     Scaffold(containerColor=if(visual)androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background,
-        topBar={if(chrome)toolbar()}){padding->
+        topBar={if(chrome)toolbar()},snackbarHost={if(active)SnackbarHost(snackbar)}){padding->
         Box(Modifier.fillMaxSize().padding(if(chrome)padding else PaddingValues(0.dp))) {
             when {
-                isMedia -> key(retry){if(item.mime.startsWith("video/"))VideoPlayerPanel(item,bundle,{retry++},Modifier.fillMaxSize())else MediaPlayerPanel(item,bundle,onRetry={retry++},modifier=Modifier.fillMaxSize())}
+                isMedia && active -> key(retry){if(item.mime.startsWith("video/"))VideoPlayerPanel(item,bundle,{retry++},Modifier.fillMaxSize())else MediaPlayerPanel(item,bundle,onRetry={retry++},modifier=Modifier.fillMaxSize())}
+                isMedia -> FileThumbnail(item,bundle,Modifier.fillMaxSize(),square=true)
                 error!=null -> Column(Modifier.align(Alignment.Center).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     Text(error!!,color=MaterialTheme.colorScheme.error)
                     DriveButton({retry++}){Text("Retry opening")}
                 }
                 file==null -> Column(Modifier.align(Alignment.Center),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator();Text("Opening file…")
+                    FileThumbnail(item,bundle,Modifier.size(160.dp),square=true);CircularProgressIndicator();Text("Opening original…")
                 }
-                isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={chrome=!chrome})
+                isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={onChrome(!chrome)},onZoom=onZoom)
                 else -> Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     when {
                         item.mime=="application/pdf" -> PdfPreview(file!!,Modifier.weight(1f))
@@ -116,12 +132,12 @@ import kotlin.math.min
                     }
                 }
             }
-            if(visual&&!chrome)IconButton({chrome=true},Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp)) {
+            if(visual&&!chrome)FilledIconButton({onChrome(true)},Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp).size(48.dp),colors=IconButtonDefaults.filledIconButtonColors(containerColor=androidx.compose.ui.graphics.Color.Black.copy(alpha=.6f))) {
                 Icon(DriveIcons.Close,"Show controls",tint=androidx.compose.ui.graphics.Color.White)
             }
         }
     }
-    if(menu)FileActionsSheet(item,state,bundle,system,onDismiss={menu=false},onPreview={menu=false;chrome=true})
+    if(menu)FileActionsSheet(item,state,bundle,system,onDismiss={menu=false},onPreview={menu=false;onChrome(true)})
     if(editText){
         var text by remember(item.id){mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
         AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp))},confirmButton={TextButton({bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save")}},dismissButton={TextButton({editText=false}){Text("Cancel")}})
@@ -137,7 +153,7 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
     return Offset(if(x==0f)0f else pan.x.coerceIn(-x,x),if(y==0f)0f else pan.y.coerceIn(-y,y))
 }
 
-@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier,onTap:()->Unit){
+@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier,onTap:()->Unit,onZoom:(Boolean)->Unit){
     var loadError by remember(file){mutableStateOf(false)}
     val bitmap by produceState<Bitmap?>(null,file) {
         try {value=withContext(Dispatchers.IO){DocumentTools(bundle.library).decode(file)}}
@@ -148,15 +164,25 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
     var viewport by remember{mutableStateOf(IntSize.Zero)}
     val image=bitmap
     val size=if(image==null)IntSize.Zero else IntSize(image.width,image.height)
+    LaunchedEffect(scale){onZoom(scale>1.01f)}
+    DisposableEffect(Unit){onDispose{onZoom(false)}}
     LaunchedEffect(viewport){pan=boundImagePan(pan,scale,viewport,size)}
     Box(modifier.clipToBounds().onSizeChanged{viewport=it}
         .pointerInput(file,size,viewport){detectTapGestures(onTap={onTap()},onDoubleTap={point->
             if(scale>1.05f){scale=1f;pan=Offset.Zero}else{scale=2.5f;pan=boundImagePan((Offset(viewport.width/2f,viewport.height/2f)-point)*1.5f,scale,viewport,size)}
         })}
-        .pointerInput(file,size,viewport){detectTransformGestures {centroid,delta,zoom,_->
-            val old=scale;scale=(scale*zoom).coerceIn(1f,6f)
-            val center=Offset(viewport.width/2f,viewport.height/2f)
-            pan=boundImagePan((pan-(centroid-center))*(scale/old)+(centroid-center)+delta,scale,viewport,size)
+        .pointerInput(file,size,viewport){awaitEachGesture {
+            awaitFirstDown(requireUnconsumed=false)
+            do {
+                val event=awaitPointerEvent()
+                if(event.changes.count{it.pressed}>1||scale>1.01f) {
+                    val centroid=event.calculateCentroid(useCurrent=true);val delta=event.calculatePan();val zoom=event.calculateZoom()
+                    val old=scale;scale=(scale*zoom).coerceIn(1f,6f)
+                    val center=Offset(viewport.width/2f,viewport.height/2f)
+                    pan=boundImagePan((pan-(centroid-center))*(scale/old)+(centroid-center)+delta,scale,viewport,size)
+                    event.changes.forEach{it.consume()}
+                }
+            }while(event.changes.any{it.pressed})
         }},contentAlignment=Alignment.Center) {
         if(image!=null)Image(image.asImageBitmap(),"Image preview",Modifier.fillMaxSize().graphicsLayer{scaleX=scale;scaleY=scale;translationX=pan.x;translationY=pan.y},contentScale=androidx.compose.ui.layout.ContentScale.Fit)
         else if(loadError)Text("This image cannot be displayed. Use File actions to save or open it in another app.",Modifier.padding(24.dp))else CircularProgressIndicator()
@@ -218,8 +244,14 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
         }
     }
     Box(modifier,contentAlignment=Alignment.Center) {
+        Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+            FileThumbnail(item,bundle,Modifier.sizeIn(maxWidth=280.dp,maxHeight=280.dp).fillMaxWidth().aspectRatio(1f))
+            Spacer(Modifier.height(20.dp))
+            Text(item.name,style=MaterialTheme.typography.titleMedium,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
         AndroidView(factory={PlayerView(it).apply{useController=true;controllerShowTimeoutMs=3000;setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;setKeepContentOnPlayerReset(false)}},
-            update={it.player=if(matching)controller else null},onRelease={it.player=null},modifier=Modifier.fillMaxSize())
+            update={it.player=if(matching)controller else null},onRelease={it.player=null},modifier=Modifier.fillMaxWidth().height(160.dp))
+        }
         if(!matching&&error==null)CircularProgressIndicator()
         error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry playback")}}}
     }

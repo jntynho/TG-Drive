@@ -26,7 +26,7 @@ class LibraryActions(val repository: LibraryRepository, val transfers: TransferE
     }
     suspend fun tags(id: String, value: String) = repository.updateItem(repository.item(id).copy(tags = normalizeTags(value)))
     suspend fun favorite(id: String) { val item = repository.item(id); repository.updateItem(item.copy(favorite = !item.favorite)) }
-    suspend fun trash(ids: List<String>) { ids.forEach { repository.updateItem(repository.item(it).copy(deletedAt = now())) }; repository.notice("Moved to Trash. Original Telegram messages are retained until permanent deletion.") }
+    suspend fun trash(ids: List<String>) { ids.forEach { repository.updateItem(repository.item(it).copy(deletedAt = now())) }; repository.offerTrashUndo(ids) }
     suspend fun restore(ids: List<String>) { ids.forEach { repository.updateItem(repository.item(it).copy(deletedAt = 0)) } }
     suspend fun purge(ids: List<String>) {
         require(ids.all { repository.item(it).deletedAt > 0L }) { "Move items to Trash before deleting permanently." }

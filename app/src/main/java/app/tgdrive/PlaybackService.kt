@@ -2,6 +2,7 @@ package app.tgdrive
 
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.exoplayer.ExoPlayer
@@ -10,6 +11,8 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import app.tgdrive.library.*
 import kotlinx.coroutines.*
+
+data class NowPlaying(val profile:String,val item:String,val playing:Boolean)
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService:MediaSessionService(){
@@ -23,6 +26,13 @@ class PlaybackService:MediaSessionService(){
         super.onCreate();instance=this
         val app=application as DriveApp
         player=ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(DriveDataSource.Factory(app.sessions))).setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT,true).setHandleAudioBecomingNoisy(true).build()
+        player.addListener(object:androidx.media3.common.Player.Listener {
+            override fun onEvents(player:androidx.media3.common.Player,events:androidx.media3.common.Player.Events){
+                val uri=player.currentMediaItem?.localConfiguration?.uri
+                val path=uri?.pathSegments.orEmpty()
+                playingState.value=if(path.size==3&&player.playbackState!=androidx.media3.common.Player.STATE_IDLE)NowPlaying(path[0],path[1],player.isPlaying)else null
+            }
+        })
         mediaSession=MediaSession.Builder(this,player).build()
         scope.launch{while(isActive){delay(10_000);savePosition()}}
     }
@@ -56,8 +66,19 @@ class PlaybackService:MediaSessionService(){
         withContext(Dispatchers.IO){runCatching{b.library.db().put("settings","playback:$version",position.toString())}}
     }
     override fun onTimeout(startId:Int,fgsType:Int){player.stop();stopSelf()}
-    override fun onDestroy(){mediaSession?.release();player.release();scope.cancel();if(instance===this)instance=null;super.onDestroy()}
+    override fun onDestroy(){playingState.value=null;mediaSession?.release();player.release();scope.cancel();if(instance===this)instance=null;super.onDestroy()}
     companion object{
+        private val playingState=kotlinx.coroutines.flow.MutableStateFlow<NowPlaying?>(null)
+        val nowPlaying:kotlinx.coroutines.flow.StateFlow<NowPlaying?> = playingState
+        fun toggle(context:Context,profile:String,item:String){ContextCompat.getMainExecutor(context).execute{instance?.let{service->
+            val parts=service.player.currentMediaItem?.localConfiguration?.uri?.pathSegments
+            if(parts?.getOrNull(0)==profile&&parts.getOrNull(1)==item){if(service.player.isPlaying)service.player.pause()else service.player.play()}
+        }}}
+        fun dismiss(context:Context,profile:String,item:String){ContextCompat.getMainExecutor(context).execute{instance?.let{service->service.scope.launch{
+            service.savePosition()
+            val parts=service.player.currentMediaItem?.localConfiguration?.uri?.pathSegments
+            if(parts?.getOrNull(0)==profile&&parts.getOrNull(1)==item){service.player.stop();service.player.clearMediaItems();service.stopSelf()}
+        }}}}
         const val PLAY="app.tgdrive.PLAY"
         @Volatile private var instance:PlaybackService?=null
         fun pause(context:Context){androidx.core.content.ContextCompat.getMainExecutor(context).execute{instance?.player?.pause()}}

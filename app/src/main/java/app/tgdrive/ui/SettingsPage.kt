@@ -21,7 +21,7 @@ import app.tgdrive.*
 import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 
-@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit){
+@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit,onAccounts:()->Unit={},query:String=""){
     var confirmCache by remember{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
     BackHandler { if(page!="home")onPage(settingsParent(page)) else onClose() }
@@ -35,13 +35,12 @@ import app.tgdrive.library.*
         }, report={bundle.library.report(it)}) }
     LaunchedEffect(state.preferences) { editor.observe(state.preferences) }
     fun prefs(update:(Preferences)->Preferences) { editor.update(update) }
-    AnimatedContent(page,transitionSpec={horizontalNavigation(targetState != "home")},label="settings-detail"){current->
+    AnimatedContent(page,transitionSpec={horizontalNavigation(initialState=="home"||(targetState=="vaults"&&initialState=="privacy"))},label="settings-detail"){current->
         Column(Modifier.fillMaxSize()){
 
             when(current){
-                "home"->SettingsHome(state){destination->onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}
+                "home"->SettingsHome(state,query){destination->if(destination=="accounts")onAccounts()else onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}
                 "vaults"->VaultsPage(state,bundle)
-                "connections"->ConnectionsPage(state,bundle)
                 else->LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     when(current){
                         "transfers"->{
@@ -99,23 +98,6 @@ import app.tgdrive.library.*
                                 SettingSwitch("Backup health notifications","Only if Android notification permission is granted.",editor.value.backupNotifications){v->prefs{it.copy(backupNotifications=v)}}
                             }}
                             item{InfoCard("App lock is not cloud encryption","Files outside a vault are Telegram cloud documents. They can still be accessed from your Telegram account. Vault keys, index encryption and screen lock are separate protections.",DriveIcons.Shield)}
-                        }
-                        "organize"->{
-                            item{DriveButton(onClick={bundle.actions.run{bundle.actions.previewOrganization(false)}}){Text("Suggest folders by file type")}}
-                            item{DriveSecondaryButton(onClick={bundle.actions.run{bundle.actions.previewOrganization(true)}}){Text("Suggest folders by added month")}}
-                            item{Text("Uses local rules and added dates, not an external AI service. Originals are not uploaded again.",style=MaterialTheme.typography.bodySmall)}
-                            if(state.organization.isNotEmpty())item{DriveButton(onClick={bundle.actions.run{bundle.actions.applyOrganization()}}){Text("Apply ${state.organization.size} reviewed changes")}}
-                            items(state.organization.take(500),key={it.itemId}){change->DriveCard(Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp)){Text(change.name);Text("${folderPath(change.fromFolderId,state.folders)} → ${change.destination}",style=MaterialTheme.typography.bodySmall)}}}
-                            item{TextButton(onClick={bundle.actions.run{bundle.actions.undoOrganization()}}){Text("Undo last organization batch")}}
-                        }
-                        "conflicts"->{
-                            item{SectionTitle("Nothing is silently lost.","Concurrent metadata candidates are preserved for explicit resolution.")}
-                            if(state.conflicts.isEmpty())item{InfoCard("No unresolved edits","Changes reconcile through operation identities, not a destructive reset.")}
-                            items(state.conflicts,key={it.id}){conflict->DriveCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){
-                                Text("${conflict.kept.kind.name.lowercase()} · ${conflict.entityId.takeLast(8)}")
-                                Text("Kept candidate: ${conflict.kept.deviceId.take(8)}\nIncoming candidate: ${conflict.incoming.deviceId.take(8)}",style=MaterialTheme.typography.bodySmall)
-                                Row{TextButton(onClick={bundle.actions.run{bundle.library.resolveConflict(conflict.id,false)}}){Text("Use kept")};TextButton(onClick={bundle.actions.run{bundle.library.resolveConflict(conflict.id,true)}}){Text("Use incoming")}}
-                            }}}
                         }
                         "diagnostics"->{
                             item{DriveGroup{

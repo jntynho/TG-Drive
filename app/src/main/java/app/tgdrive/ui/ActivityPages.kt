@@ -26,14 +26,20 @@ import java.util.Date
     val tasks=remember(state.tasks,filter){state.tasks.filter{when(filter){"Failed"->it.state==TaskState.FAILED;"Done"->it.state==TaskState.COMPLETED;"Active"->it.state !in setOf(TaskState.COMPLETED,TaskState.CANCELLED,TaskState.FAILED);else->true}}.sortedByDescending{it.createdAt}}
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
         item{Text("Uploads, downloads and saved work",color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        item{FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){DriveButton(onClick=system.startTransfers){Icon(DriveIcons.PlayArrow,null);Text("Process queue")};TextButton(onClick={bundle.actions.run{bundle.transfers.clearFinished()}}){Text("Clear finished")}}}
+        item{TransferSummary(state)}
+        item{FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            val running=state.tasks.any{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}
+            val paused=state.tasks.filter{it.state==TaskState.PAUSED}
+            DriveButton(enabled=!running,onClick={bundle.actions.run{paused.forEach{bundle.transfers.retry(it.id)};system.startTransfers()}}){Icon(DriveIcons.PlayArrow,null);Text(if(running)"Transfers running"else if(paused.isNotEmpty())"Resume paused"else if(state.pendingOperations>0)"Finish syncing"else"Start transfers")}
+            TextButton(onClick={bundle.actions.run{bundle.transfers.clearFinished()}}){Text("Clear finished")}
+        }}
         if(remaining>0)item{InfoCard("Sending resumes in ${remaining}s","Telegram asked this account to wait. Your uploaded parts and queue are saved.",DriveIcons.CloudSync)}
         item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("All","Active","Failed","Done")){label->DriveFilterChip(filter==label,{filter=label},label={Text(label)})}}}
         if(tasks.isEmpty())item{InfoCard("Nothing here yet","Add files or choose a download. Each operation will appear here.",DriveIcons.SwapVert)}
         items(tasks,key={it.id}){task->DriveCard(Modifier.fillMaxWidth()){
             Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
                 Row(verticalAlignment=Alignment.CenterVertically){Icon(if(task.kind==TaskKind.UPLOAD)DriveIcons.CloudUpload else DriveIcons.Download,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(10.dp));Text(if(task.vaultId.isNotEmpty()&&task.vaultId !in state.unlockedVaultIds)"Protected file" else task.title,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);Text(task.kind.name.lowercase().replaceFirstChar{it.uppercase()},style=MaterialTheme.typography.labelSmall)}
-                Text(if(task.state==TaskState.SYNCING_METADATA)"Saving library information" else task.state.name.lowercase().replace('_',' ').replaceFirstChar{it.uppercase()},color=if(task.state==TaskState.FAILED)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelLarge)
+                Text(transferLabel(task.state),color=if(task.state==TaskState.FAILED)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,style=MaterialTheme.typography.labelLarge)
                 if(task.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)){
                     if(task.total>0)LinearProgressIndicator(progress={(task.done.toFloat()/task.total).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())else LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
@@ -41,9 +47,9 @@ import java.util.Date
                 if(task.error.isNotBlank())Text(if(task.vaultId.isNotEmpty()&&task.vaultId !in state.unlockedVaultIds)"Unlock the vault to view transfer details." else task.error,style=MaterialTheme.typography.bodySmall,color=if(task.state==TaskState.FAILED)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     if(task.state !in setOf(TaskState.COMPLETED,TaskState.CANCELLED)){
-                        if(task.state in setOf(TaskState.PAUSED,TaskState.FAILED,TaskState.RETRY_WAIT,TaskState.WAITING_FOR_UNLOCK,TaskState.WAITING_FOR_WIFI,TaskState.WAITING_FOR_CHARGING,TaskState.WAITING_FOR_NETWORK,TaskState.WAITING_FOR_DEVICE))TextButton(enabled=remaining==0L || task.kind!=TaskKind.UPLOAD,onClick={bundle.actions.run{bundle.transfers.retry(task.id);system.startTransfers()}}){Text("Resume / retry")}
+                        if(task.state in setOf(TaskState.PAUSED,TaskState.FAILED,TaskState.RETRY_WAIT,TaskState.WAITING_FOR_UNLOCK,TaskState.WAITING_FOR_WIFI,TaskState.WAITING_FOR_CHARGING,TaskState.WAITING_FOR_NETWORK,TaskState.WAITING_FOR_DEVICE))TextButton(enabled=remaining==0L || task.kind!=TaskKind.UPLOAD,onClick={bundle.actions.run{bundle.transfers.retry(task.id);system.startTransfers()}}){Text(if(task.state==TaskState.FAILED)"Try again"else"Resume")}
                         else TextButton(onClick={bundle.actions.run{bundle.transfers.pause(task.id)}}){Text("Pause")}
-                        if(task.priority==0)TextButton(onClick={bundle.actions.run{bundle.transfers.prioritize(task.id)}}){Text("Prioritize")}
+                        if(task.priority==0)TextButton(onClick={bundle.actions.run{bundle.transfers.prioritize(task.id)}}){Text("Do this next")}
                         TextButton(onClick={cancelId=task.id}){Text("Cancel")}
                     }
                 }
@@ -86,4 +92,28 @@ import java.util.Date
     if(pickFolder)FolderPicker(state,destination,{pickFolder=false}){id->destination=id;vault=state.folderVaults[id].orEmpty();pickFolder=false}
     if(removeId.isNotEmpty())ConfirmDialog("Remove backup rule?","Uploaded files and per-file receipts are retained. No cloud content is deleted.","Remove rule",{removeId=""}){val id=removeId;bundle.actions.run{bundle.library.removeRule(id)};removeId=""}
     rescanId?.let{id->ConfirmDialog("Rescan including old content?","This ignores the upload receipt and can bring back content you deliberately removed. It may create additional copies. Normal Scan now is safer.","Rescan all",{rescanId=null}){system.scanBackups(id,true);rescanId=null}}
+}
+
+internal fun transferLabel(state:TaskState):String=when(state){
+    TaskState.SYNCING_METADATA->"Finishing library sync"
+    TaskState.WAITING_FOR_WIFI->"Waiting for Wi-Fi"
+    TaskState.WAITING_FOR_CHARGING->"Waiting for charging"
+    TaskState.WAITING_FOR_UNLOCK->"Waiting for vault unlock"
+    TaskState.WAITING_FOR_NETWORK->"Waiting for connection"
+    TaskState.RETRY_WAIT->"Waiting to retry"
+    TaskState.COMPLETED->"Saved successfully"
+    TaskState.PREPARING->"Preparing file"
+    TaskState.TRANSFERRING->"Transferring"
+    else->state.name.lowercase().replace('_',' ').replaceFirstChar{it.uppercase()}
+}
+@Composable internal fun TransferSummary(state:LibraryState) {
+    val total=state.tasks.count{it.state!=TaskState.CANCELLED}
+    val done=state.tasks.count{it.state==TaskState.COMPLETED}
+    val failed=state.tasks.count{it.state==TaskState.FAILED}
+    DriveCard(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text("$done of $total operations complete",style=MaterialTheme.typography.titleMedium)
+        if(total>0)LinearProgressIndicator(progress={done.toFloat()/total},modifier=Modifier.fillMaxWidth())
+        if(failed>0)Text("$failed need attention",color=MaterialTheme.colorScheme.error)
+        if(state.pendingOperations>0)Text("Library changes are waiting to sync",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    }}
 }
