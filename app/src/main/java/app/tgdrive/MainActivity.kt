@@ -14,6 +14,7 @@ import android.provider.OpenableColumns
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
@@ -65,7 +66,9 @@ class MainActivity : FragmentActivity() {
     private val deviceCredential=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->if(result.resultCode==RESULT_OK)unlocked() else app.sessions.active().library.notice("Device authentication was not completed.")}
 
     override fun onCreate(savedInstanceState:Bundle?){
-        super.onCreate(savedInstanceState);enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         target=runCatching{savedInstanceState?.getString("target")?.model<PendingTarget>()}.getOrNull()?:PendingTarget(app.sessions.activeId.value)
         saveTarget=runCatching{savedInstanceState?.getString("save")?.model<SaveTarget>()}.getOrNull()?:SaveTarget(app.sessions.activeId.value)
         cameraUri=savedInstanceState?.getString("camera")?.let(Uri::parse)
@@ -95,7 +98,7 @@ class MainActivity : FragmentActivity() {
             )}
             DriveTheme{
                 if(locked)Surface(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(32.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-                    Text("Your space is locked",style=MaterialTheme.typography.headlineMedium);Spacer(Modifier.height(14.dp));Text("Use your device credential or biometrics to continue.");Spacer(Modifier.height(22.dp));Button(onClick={authenticate()}){Text("Unlock TG Drive")}
+                    Text("Your space is locked",style=MaterialTheme.typography.headlineMedium);Spacer(Modifier.height(14.dp));Text("Use your device credential or biometrics to continue.");Spacer(Modifier.height(22.dp));DriveButton(onClick={authenticate()}){Text("Unlock TG Drive")}
                 }}else key(active){NativeApp(bundle,app.sessions,system)}
                 if(!locked){
                     pickedTree?.let{uri->BackupWizard(uri,bundle)}
@@ -216,7 +219,7 @@ class MainActivity : FragmentActivity() {
     @Composable private fun BackupWizard(uri:Uri,bundle:SessionBundle){
         var name by remember(uri){mutableStateOf("Selected folder")};var fromToday by remember{mutableStateOf(false)}
         AlertDialog(onDismissRequest={pickedTree=null},title={Text("Back up this folder")},text={Column{
-            OutlinedTextField(name,{name=it},label={Text("Rule name")});Row{Checkbox(fromToday,{fromToday=it});Text("Only files modified from today")}
+            DriveTextField(name,{name=it},label={Text("Rule name")});Row{Checkbox(fromToday,{fromToday=it});Text("Only files modified from today")}
             Text("This is upload-only. Background scheduling depends on Android, network rules and destination vault availability.",style=MaterialTheme.typography.bodySmall)
         }},confirmButton={TextButton(onClick={val dest=target.copy();val chosen=uri;app.sessions.bundle(dest.profile).actions.run{
             val b=app.sessions.bundle(dest.profile);b.backups.add(chosen,name,dest.folder,dest.vault,if(fromToday)now()else 0);BackgroundWork.schedule(this@MainActivity,dest.profile,b.library.state.value.preferences.scanIntervalHours);startQueue(dest.profile,scan=true)

@@ -56,18 +56,18 @@ import java.io.File
             }catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not open this file."}
         }
     }
-    Scaffold(topBar={TopAppBar(title={Column{Text(item.name,maxLines=1);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall)}},navigationIcon={IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Outlined.ArrowBack,"Back to files")}},actions={
+    Scaffold(topBar={TopAppBar(title={Column{Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall)}},navigationIcon={DriveCircleButton(Icons.AutoMirrored.Outlined.ArrowBack,"Back to files",onBack,Modifier.padding(start=8.dp))},actions={
         IconButton(onClick={system.save(item)}){Icon(Icons.Outlined.Download,"Save file")}
         IconButton(onClick={system.shareExternal(item)}){Icon(Icons.Outlined.Share,"Share exported copy")}
-    })}){padding->
+    },colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))}){padding->
         Column(Modifier.fillMaxSize().padding(padding),verticalArrangement=Arrangement.spacedBy(10.dp)){
             when{
                 isMedia->Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     MediaPlayerPanel()
-                    Button(onClick={system.play(item)},Modifier.fillMaxWidth()){Icon(Icons.Outlined.PlayArrow,null);Text("Play / resume")}
+                    DriveButton(onClick={system.play(item)},Modifier.fillMaxWidth()){Icon(Icons.Outlined.PlayArrow,null);Text("Play / resume")}
                     Text("Playback requests ranges as needed. Starting playback is not a full-file integrity check. Network and codec support affect availability.",style=MaterialTheme.typography.bodySmall)
                 }
-                error!=null->Column(Modifier.padding(24.dp)){Text(error!!,color=MaterialTheme.colorScheme.error);Button(onClick={retry++}){Text("Retry opening")}}
+                error!=null->Column(Modifier.padding(24.dp)){Text(error!!,color=MaterialTheme.colorScheme.error);DriveButton(onClick={retry++}){Text("Retry opening")}}
                 file==null->Column(Modifier.fillMaxWidth().padding(28.dp),horizontalAlignment=Alignment.CenterHorizontally){CircularProgressIndicator();Spacer(Modifier.height(12.dp));Text("Downloading and checking content…")}
                 item.mime.startsWith("image/")->ImagePreview(file!!,bundle,Modifier.weight(1f))
                 item.mime=="application/pdf"->PdfPreview(file!!,Modifier.weight(1f))
@@ -75,7 +75,7 @@ import java.io.File
                 else->Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
                     Icon(fileIcon(item.mime),null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.primary)
                     Text("This format has no built-in preview. The file is available for export.")
-                    Button(onClick={system.openExternal(item)}){Text("Open in another application")}
+                    DriveButton(onClick={system.openExternal(item)}){Text("Open in another application")}
                 }
             }
             state.local[item.id]?.ocrText?.takeIf{it.isNotBlank()}?.let{text->ElevatedCard(Modifier.fillMaxWidth().padding(16.dp).heightIn(max=220.dp)){
@@ -85,7 +85,7 @@ import java.io.File
     }
     if(editText){
         var text by remember{mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
-        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={OutlinedTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp),label={Text("Local searchable text")})},confirmButton={TextButton(onClick={bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save text")}},dismissButton={TextButton(onClick={editText=false}){Text("Cancel")}})
+        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp),label={Text("Local searchable text")})},confirmButton={TextButton(onClick={bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save text")}},dismissButton={TextButton(onClick={editText=false}){Text("Cancel")}})
     }
 }
 @Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier){

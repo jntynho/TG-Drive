@@ -95,15 +95,15 @@ fun DriveScreen(
                     }
                 }
                 item {
-                    OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+                    DriveTextField(value = query, onValueChange = { query = it }, singleLine = true,
                         placeholder = { Text(stringResource(R.string.search)) }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                        shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth())
+                        shape = DriveStyle.CardShape, modifier = Modifier.fillMaxWidth())
                 }
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        item { FilterChip(selected = folder.isEmpty(), onClick = { onFolder(""); query = "" }, label = { Text(stringResource(R.string.home)) }, leadingIcon = { Icon(Icons.Outlined.Home, null, Modifier.size(18.dp)) }) }
-                        items(folders, key = { it }) { name -> FilterChip(selected = folder == name, onClick = { onFolder(name); query = "" }, label = { Text(name) }, leadingIcon = { Icon(Icons.Outlined.Folder, null, Modifier.size(18.dp)) }) }
-                        item { AssistChip(onClick = { newFolder = true }, label = { Text(stringResource(R.string.new_folder)) }, leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null, Modifier.size(18.dp)) }) }
+                        item { DriveFilterChip(selected = folder.isEmpty(), onClick = { onFolder(""); query = "" }, label = { Text(stringResource(R.string.home)) }, leadingIcon = { Icon(Icons.Outlined.Home, null, Modifier.size(18.dp)) }) }
+                        items(folders, key = { it }) { name -> DriveFilterChip(selected = folder == name, onClick = { onFolder(name); query = "" }, label = { Text(name) }, leadingIcon = { Icon(Icons.Outlined.Folder, null, Modifier.size(18.dp)) }) }
+                        item { DriveAssistChip(onClick = { newFolder = true }, label = { Text(stringResource(R.string.new_folder)) }, leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null, Modifier.size(18.dp)) }) }
                     }
                 }
                 if (state.syncing) item {
@@ -152,7 +152,7 @@ fun DriveScreen(
         var name by remember { mutableStateOf("") }
         AlertDialog(onDismissRequest = { newFolder = false }, title = { Text(stringResource(R.string.new_folder)) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(name, { name = it }, singleLine = true, label = { Text(stringResource(R.string.folder_name)) })
+                DriveTextField(name, { name = it }, singleLine = true, label = { Text(stringResource(R.string.folder_name)) })
                 Text(stringResource(R.string.folder_note), style = MaterialTheme.typography.bodySmall)
             }
         }, confirmButton = { TextButton(onClick = { createFolder(name); newFolder = false }, enabled = FileMetadata.validFolder(name.trim())) { Text(stringResource(R.string.create)) } }, dismissButton = { TextButton(onClick = { newFolder = false }) { Text(stringResource(R.string.cancel)) } })
@@ -171,24 +171,20 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
     var apiHash by remember { mutableStateOf("") }
     var value by remember(state.login) { mutableStateOf("") }
     val uri = LocalUriHandler.current
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        Box(Modifier.size(80.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(24.dp)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.CloudQueue, null, Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+    Column(modifier.fillMaxSize().background(DriveStyle.SignInCanvas).imePadding().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(20.dp)) {
+            Icon(Icons.Outlined.CloudQueue, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+            Text("Welcome to TG Drive", style=MaterialTheme.typography.headlineLarge, textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.welcome), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text(stringResource(R.string.welcome_body), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Card {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 when (state.login) {
                     LoginStep.CONFIGURE -> {
                         Text(stringResource(R.string.configure), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(R.string.configure_body), style = MaterialTheme.typography.bodyMedium)
-                        OutlinedTextField(apiId, { apiId = it }, enabled = !state.busy, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(apiHash, { apiHash = it }, enabled = !state.busy, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                        Button(onClick = { configure(apiId.trim(), apiHash.trim()) }, enabled = apiId.isNotBlank() && apiHash.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                        DriveTextField(apiId, { apiId = it }, enabled = !state.busy, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                        DriveTextField(apiHash, { apiHash = it }, enabled = !state.busy, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                        DriveButton(onClick = { configure(apiId.trim(), apiHash.trim()) }, enabled = apiId.isNotBlank() && apiHash.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         TextButton(onClick = { uri.openUri("https://my.telegram.org/apps") }) { Text(stringResource(R.string.get_api)) }
                     }
@@ -196,21 +192,21 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                         val label = when (state.login) { LoginStep.PHONE -> R.string.phone; LoginStep.CODE -> R.string.code; else -> R.string.password }
                         Text(stringResource(R.string.connect_telegram), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(when (state.login) { LoginStep.PHONE -> R.string.phone_body; LoginStep.CODE -> R.string.code_body; else -> R.string.password_body }))
-                        OutlinedTextField(value, { value = it }, label = { Text(stringResource(label)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        DriveTextField(value, { value = it }, label = { Text(stringResource(label)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                             visualTransformation = if (state.login == LoginStep.PASSWORD) PasswordVisualTransformation() else VisualTransformation.None,
                             keyboardOptions = KeyboardOptions(keyboardType = when(state.login) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
-                        Button(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                        DriveButton(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         if (state.login == LoginStep.PHONE) TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.CLOSED -> {
                         Text(stringResource(R.string.signed_out))
-                        Button(onClick = reconnect) { Text(stringResource(R.string.connect_telegram)) }
+                        DriveButton(onClick = reconnect) { Text(stringResource(R.string.connect_telegram)) }
                         TextButton(onClick = editCredentials) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.CONNECTION_ERROR -> {
                         Text(stringResource(R.string.connection_failed), style = MaterialTheme.typography.titleLarge)
-                        Button(onClick = reconnect, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_connection)) }
+                        DriveButton(onClick = reconnect, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_connection)) }
                         TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.OTHER_DEVICE -> {
@@ -228,7 +224,6 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                     else -> R.string.network_ready
                 }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
         Text(stringResource(R.string.auth_privacy), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("TG Drive · ${app.tgdrive.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall)
     }
@@ -236,7 +231,7 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
 
 @Composable
 private fun StatCard(icon: ImageVector, value: String, label: String, modifier: Modifier) {
-    Card(modifier, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    Card(modifier, shape = DriveStyle.CardShape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
             Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -248,7 +243,7 @@ private fun StatCard(icon: ImageVector, value: String, label: String, modifier: 
 @Composable
 private fun FileCard(file: DriveFile, enabled: Boolean, download: () -> Unit, delete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = DriveStyle.CardShape) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val icon = when {
                 file.mimeType.startsWith("image/") -> Icons.Outlined.Image

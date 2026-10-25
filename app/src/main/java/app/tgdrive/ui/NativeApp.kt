@@ -13,9 +13,11 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,6 +47,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     var tab by rememberSaveable(bundle.profile.id) { mutableStateOf(NativeTab.FILES) }
     var accountSheet by remember { mutableStateOf(false) }
     var previewId by rememberSaveable(bundle.profile.id) { mutableStateOf("") }
+    val pageState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.notice,state.error,auth.error) {
         val message = state.error ?: state.notice ?: auth.error
@@ -53,36 +56,42 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     val preview = state.items.firstOrNull { it.id == previewId }
     BackHandler(enabled=preview!=null){previewId=""}
     LaunchedEffect(state.items,previewId) { if(previewId.isNotEmpty()&&preview==null)previewId="" }
-    AnimatedContent(targetState=preview,transitionSpec={ (fadeIn(tween(180))+slideInHorizontally(tween(180)){it/12}) togetherWith fadeOut(tween(130)) },label="file-preview") { item ->
+    AnimatedContent(targetState=preview,transitionSpec={ fadeIn(tween(DriveStyle.EnterMillis)) togetherWith fadeOut(tween(DriveStyle.ExitMillis)) },label="file-preview") { item ->
         if(item!=null) {
             NativePreview(item,bundle,system,onBack={previewId=""})
         }else{
-            Scaffold(snackbarHost={SnackbarHost(snackbar)}, topBar={
+            val signingIn = auth.login != LoginStep.READY
+            val showingSettings = !signingIn && state.loaded && tab == NativeTab.SETTINGS
+            Scaffold(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
+                snackbarHost={SnackbarHost(snackbar)}, topBar={if(!showingSettings){
                 TopAppBar(title={Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     Icon(Icons.Outlined.CloudQueue,null,tint=MaterialTheme.colorScheme.primary)
-                    Text("TG Drive",fontWeight=FontWeight.SemiBold)
+                    Text("TG Drive",style=MaterialTheme.typography.titleMedium)
                 }},actions={
-                    if(auth.login==LoginStep.READY)IconButton(onClick={bundle.actions.run{bundle.library.sync()}}){Icon(Icons.Outlined.Refresh,"Sync metadata")}
+                    if(auth.login==LoginStep.READY)DriveCircleButton(Icons.Outlined.Refresh,"Sync metadata",{bundle.actions.run{bundle.library.sync()}},Modifier.padding(end=4.dp))
                     TextButton(onClick={accountSheet=true}){Text(if(state.accountName.isBlank())"Account" else state.accountName.take(16));Icon(Icons.Outlined.ExpandMore,null,Modifier.size(18.dp))}
-                },colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))
-            },bottomBar={if(auth.login==LoginStep.READY&&state.loaded)NavigationBar{
+                },colors=TopAppBarDefaults.topAppBarColors(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background))
+            }},bottomBar={if(auth.login==LoginStep.READY&&state.loaded&&!showingSettings)NavigationBar(containerColor=MaterialTheme.colorScheme.background,tonalElevation=0.dp){
                 NativeTab.entries.forEach { page -> NavigationBarItem(selected=tab==page,onClick={tab=page},icon={
                     BadgedBox(badge={if(page==NativeTab.TRANSFERS&&state.tasks.any{it.state==TaskState.FAILED})Badge()}){Icon(page.icon,page.title)}
-                },label={Text(page.title)}) }
+                },label={Text(page.title,style=MaterialTheme.typography.labelSmall)},colors=NavigationBarItemDefaults.colors(
+                    selectedIconColor=MaterialTheme.colorScheme.onSurface,selectedTextColor=MaterialTheme.colorScheme.onSurface,
+                    indicatorColor=MaterialTheme.colorScheme.surface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant)) }
             }}){padding->
                 when {
                     auth.login!=LoginStep.READY->AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.padding(padding))
                     !state.loaded->Column(Modifier.fillMaxSize().padding(padding).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                         val openError=state.error?:auth.error
-                        if(openError==null){CircularProgressIndicator();Spacer(Modifier.height(18.dp));Text("Opening your private library…")}else{Text(openError,color=MaterialTheme.colorScheme.error);Text("Your Telegram files have not been deleted.");Button(onClick={bundle.library.retryInitialization()}){Text("Retry opening library")}}
+                        if(openError==null){CircularProgressIndicator();Spacer(Modifier.height(18.dp));Text("Opening your private library…")}else{Text(openError,color=MaterialTheme.colorScheme.error);Text("Your Telegram files have not been deleted.");DriveButton(onClick={bundle.library.retryInitialization()}){Text("Retry opening library")}}
                     }
-                    else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={fadeIn(tween(180)) togetherWith fadeOut(tween(110))},label="navigation") { page ->
-                        when(page){
+                    else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={fadeIn(tween(DriveStyle.EnterMillis)) togetherWith fadeOut(tween(DriveStyle.ExitMillis))},label="navigation") { page ->
+                        pageState.SaveableStateProvider(page){when(page){
                             NativeTab.FILES->FilesPage(state,bundle,system,onPreview={previewId=it})
                             NativeTab.TRANSFERS->TransfersPage(state,bundle,system)
                             NativeTab.BACKUPS->BackupsPage(state,bundle,system)
-                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system)
-                        }
+                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.FILES})
+                        }}
                     }
                 }
             }
@@ -91,7 +100,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     if(accountSheet)ModalBottomSheet(onDismissRequest={accountSheet=false}){
         Column(Modifier.fillMaxWidth().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("Your accounts",style=MaterialTheme.typography.headlineSmall)
-            profiles.forEach { profile->OutlinedCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth()){
+            profiles.forEach { profile->DriveCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth()){
                 Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.AccountCircle,null);Spacer(Modifier.width(12.dp));Text(profile.label,Modifier.weight(1f));if(profile.id==bundle.profile.id)Icon(Icons.Outlined.Check,null,tint=MaterialTheme.colorScheme.primary)}
             }}
             TextButton(onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(Icons.Outlined.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
@@ -110,15 +119,15 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
 }
 
 @Composable fun SectionTitle(title: String, subtitle: String? = null) {
-    Column(verticalArrangement=Arrangement.spacedBy(5.dp)){Text(title,style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.SemiBold);if(subtitle!=null)Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,style=MaterialTheme.typography.headlineMedium);if(subtitle!=null)Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
 }
 @Composable fun InfoCard(title: String, text: String, icon: ImageVector = Icons.Outlined.Info) {
-    Card(shape=RoundedCornerShape(18.dp),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){
-        Row(Modifier.fillMaxWidth().padding(18.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {Icon(icon,null,tint=MaterialTheme.colorScheme.primary);Column{Text(title,fontWeight=FontWeight.SemiBold);Text(text,style=MaterialTheme.typography.bodySmall)}}
+    Card(shape=DriveStyle.CardShape,colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){
+        Row(Modifier.fillMaxWidth().padding(20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {Icon(icon,null,tint=MaterialTheme.colorScheme.onSurfaceVariant);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(title,style=MaterialTheme.typography.titleSmall);Text(text,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
     }
 }
 @Composable fun ActionRow(title: String, subtitle: String = "", icon: ImageVector=Icons.Outlined.ChevronRight, onClick: ()->Unit) {
-    Surface(onClick=onClick,shape=RoundedCornerShape(14.dp),color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-        Icon(icon,null,tint=MaterialTheme.colorScheme.primary);Column(Modifier.weight(1f)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.AutoMirrored.Outlined.ArrowForward,null,Modifier.size(18.dp))
+    Surface(onClick=onClick,shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(horizontal=20.dp,vertical=17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
+        Icon(icon,null,tint=MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight,null,Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
     }}
 }

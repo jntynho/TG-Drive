@@ -20,7 +20,7 @@ import java.util.Date
 
 @Composable fun TextInputDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,onConfirm:(String)->Unit){
     var value by remember{mutableStateOf(initial)}
-    AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={OutlinedTextField(value,{value=it},label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())},confirmButton={TextButton(onClick={onConfirm(value)},enabled=value.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+    AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={DriveTextField(value,{value=it},label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())},confirmButton={TextButton(onClick={onConfirm(value)},enabled=value.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
 @Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,onConfirm:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={Text(text)},confirmButton={TextButton(onClick=onConfirm){Text(confirm)}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})}
 @Composable fun FolderPicker(state:LibraryState,current:String,onDismiss:()->Unit,onPick:(String)->Unit){
@@ -34,11 +34,11 @@ import java.util.Date
     var t by remember{mutableStateOf(type)};var m by remember{mutableLongStateOf(minimum)};var d by remember{mutableIntStateOf(days)};var o by remember{mutableStateOf(order)}
     ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         SectionTitle("Find the right file")
-        Text("Type");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("all","image","video","audio","document")){v->FilterChip(t==v,{t=v},label={Text(v.replaceFirstChar{it.uppercase()})})}}
-        Text("Minimum size");Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(0L,10L*1024*1024,100L*1024*1024).forEach{v->FilterChip(m==v,{m=v},label={Text(if(v==0L)"Any" else formatBytes(v))})}}
-        Text("Added");Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf(0,7,30).forEach{v->FilterChip(d==v,{d=v},label={Text(if(v==0)"Any time" else "$v days")})}}
-        Text("Sort");Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf("Newest","Name","Largest").forEach{v->FilterChip(o==v,{o=v},label={Text(v)})}}
-        Button(onClick={onApply(t,m,d,o)},Modifier.fillMaxWidth()){Text("Apply filters")}
+        Text("Type");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("all","image","video","audio","document")){v->DriveFilterChip(t==v,{t=v},label={Text(v.replaceFirstChar{it.uppercase()})})}}
+        Text("Minimum size");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(0L,10L*1024*1024,100L*1024*1024)){v->DriveFilterChip(m==v,{m=v},label={Text(if(v==0L)"Any" else formatBytes(v))})}}
+        Text("Added");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(0,7,30)){v->DriveFilterChip(d==v,{d=v},label={Text(if(v==0)"Any time" else "$v days")})}}
+        Text("Sort");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("Newest","Name","Largest")){v->DriveFilterChip(o==v,{o=v},label={Text(v)})}}
+        DriveButton(onClick={onApply(t,m,d,o)},Modifier.fillMaxWidth()){Text("Apply filters")}
         TextButton(onClick={onApply("all",0,0,"Newest")}){Text("Reset all filters")};Spacer(Modifier.height(16.dp))
     }}
 }
@@ -104,7 +104,7 @@ import java.util.Date
 @Composable fun VersionSheet(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
     ModalBottomSheet(onDismissRequest=onDismiss){LazyColumn(Modifier.fillMaxWidth().heightIn(max=600.dp),contentPadding=PaddingValues(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
         item{SectionTitle("Content versions","Restoring retains the other content versions.")}
-        items(state.versions.filter{it.itemId==item.id}.sortedByDescending{it.createdAt},key={it.id}){version->OutlinedCard(Modifier.fillMaxWidth()){
+        items(state.versions.filter{it.itemId==item.id}.sortedByDescending{it.createdAt},key={it.id}){version->DriveCard(Modifier.fillMaxWidth()){
             Column(Modifier.padding(16.dp)){Text(DateFormat.getDateTimeInstance().format(Date(version.createdAt)));Text(formatBytes(version.size),style=MaterialTheme.typography.bodySmall);if(version.id==item.versionId)Text("Current version",color=MaterialTheme.colorScheme.primary)else TextButton(onClick={bundle.actions.run{bundle.actions.restoreVersion(item.id,version.id)};onDismiss()}){Text("Restore this version")}}
         }}
     }}
@@ -115,7 +115,7 @@ import java.util.Date
         if(state.preferences.sharingUrl.isBlank())Text("Configure an HTTPS sharing server in Settings → Connections. No public link can be created without it.",color=MaterialTheme.colorScheme.error)
         Text("This exports a decrypted copy to your server, even for vault files. The server operator can read that copy. Revocation cannot recall downloaded copies.")
         Text("Expires in ${hours.toInt()} hours");Slider(hours,{hours=it},valueRange=1f..168f)
-        OutlinedTextField(password,{password=it},label={Text("Optional link password")},visualTransformation=PasswordVisualTransformation(),singleLine=true)
+        DriveTextField(password,{password=it},label={Text("Optional link password")},visualTransformation=PasswordVisualTransformation(),singleLine=true)
         Row{Checkbox(consent,{consent=it});Text("I approve exporting this copy.",style=MaterialTheme.typography.bodySmall)}
     }},confirmButton={TextButton(onClick={bundle.actions.run{bundle.transfers.enqueue(TaskKind.SHARE,item,payload=ShareOptions(hours.toInt()).json(),sharePassword=password);start()};onDismiss()},enabled=consent&&state.preferences.sharingUrl.isNotBlank()){Text("Create link")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
@@ -124,7 +124,7 @@ import java.util.Date
     var selected by remember{mutableStateOf(setOf<Long>())}
     ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().padding(20.dp)){
         SectionTitle("Existing Saved Messages","Only selected references are imported. Original captions are retained.")
-        Button(onClick={val rows=state.incoming.filter{it.messageId in selected};bundle.actions.run{rows.forEach{bundle.library.importMessage(it,folder)}};onDismiss()},enabled=selected.isNotEmpty()){Text("Import ${selected.size} selected")}
+        DriveButton(onClick={val rows=state.incoming.filter{it.messageId in selected};bundle.actions.run{rows.forEach{bundle.library.importMessage(it,folder)}};onDismiss()},enabled=selected.isNotEmpty()){Text("Import ${selected.size} selected")}
         LazyColumn(Modifier.heightIn(max=450.dp)){items(state.incoming,key={it.messageId}){candidate->Row(Modifier.fillMaxWidth().padding(vertical=8.dp)){
             Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column{Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
         }}}

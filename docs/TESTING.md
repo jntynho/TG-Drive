@@ -1,4 +1,4 @@
-# Validation and acceptance — Android 0.2.0
+# Validation and acceptance — Android 0.3.0
 
 ## Automated workflow
 
@@ -15,6 +15,14 @@ Unit tests include the actual repository, SQLite database, queue and cache with 
 The device suite expects English. It tests native TDLib loading/execution, authentication privacy/error controls, explicit delete cancellation in the legacy view, actual MainActivity startup/account sheet, native grid action separation, and accessible selection/long press. It does not exercise an authenticated cloud library. CI requires this suite on a KVM emulator before the signed build job.
 
 The optional sharing server tests owner authentication, path/name validation, exact bytes, password enforcement, expiry, revocation, size/hash rejection, HTML escaping and idempotent upload retries. Loopback HTTP tests do not establish a deployed HTTPS service or production scalability.
+
+The 0.3.0 visual refresh adds three Robolectric/native-graphics Compose cases:
+all nine grouped settings routes remain reachable, switch rows expose a single
+labelled control and retain toggled state, and phone sign-in gates Continue and
+forwards the entered number unchanged. The cases generate synthetic-state
+previews in `app/build/design-previews/`, included in CI's `validation-reports`.
+These renders were visually reviewed against the supplied Muse Android images;
+they do not measure real-device frame timing. See [the design reference](DESIGN.md).
 
 ## Actual environment limits
 

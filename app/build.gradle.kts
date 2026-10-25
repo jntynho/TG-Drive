@@ -29,8 +29,8 @@ android {
         applicationId = "app.tgdrive"
         minSdk = 26
         targetSdk = 36
-        versionCode = setting("APP_VERSION_CODE").ifBlank { "12" }.toInt().also { require(it > 0) }
-        versionName = setting("APP_VERSION_NAME").ifBlank { "0.2.1" }
+        versionCode = setting("APP_VERSION_CODE").ifBlank { "13" }.toInt().also { require(it > 0) }
+        versionName = setting("APP_VERSION_NAME").ifBlank { "0.3.0" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TELEGRAM_API_ID", literal(setting("TELEGRAM_API_ID")))
         buildConfigField("String", "TELEGRAM_API_HASH", literal(setting("TELEGRAM_API_HASH")))
@@ -106,6 +106,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation(platform("androidx.compose:compose-bom:2025.05.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.05.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

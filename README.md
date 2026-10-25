@@ -1,6 +1,6 @@
 # TG Drive
 
-Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.2.1 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
+Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.3.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
 
 - Multiple uploads, persistent queue, priority, per-file retry/pause, unmetered/charging rules and approximate upload pacing.
 - Nested folders, rename/move, tags, favorites, search/filter, grid/list, trash, content versions and reversible organization rules.
@@ -12,6 +12,8 @@ Android file manager for documents stored in **your own Telegram Saved Messages*
 - Optional HTTPS WebDAV copy export with download verification, and expiring/password-protected/revocable public-copy links through the included [sharing service](sharing-server/README.md).
 
 See [the feature-by-feature implementation and limits](docs/IMPLEMENTATION_STATUS.md), [security boundaries](docs/SECURITY.md), [validation](docs/TESTING.md), and [release instructions](docs/RELEASING.md).
+
+The [0.3.0 visual refresh](docs/DESIGN.md) applies the supplied Muse Android reference to the native UI: charcoal surfaces, grouped rounded settings, blue pill buttons, filled fields and quiet transitions. It uses the system font and adds no runtime libraries or image assets.
 
 ## Build
 

@@ -1,4 +1,4 @@
-# Building and releasing 0.2.1
+# Building and releasing 0.3.0
 
 ## GitHub Actions
 
@@ -22,7 +22,7 @@
 
 Choose one APK matching the device. These are standalone APKs, not a set that must be installed together. All outputs share the application ID, version code/name and signing identity. Ordinary debug/emulator builds keep their existing universal packaging; opt into distribution APKs with `-PsplitApks=true`. ABI selection changes only packaging, not transfer, account, encryption or preview code.
 
-Push to `main` builds artifacts. A `v…` tag or workflow dispatch with `publish=true` creates a GitHub prerelease. Default manual version is `0.2.1`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
+Push to `main` builds artifacts. A `v…` tag or workflow dispatch with `publish=true` creates a GitHub prerelease. Default manual version is `0.3.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
 
 ## Existing signing identity
 

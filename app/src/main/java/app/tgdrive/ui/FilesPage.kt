@@ -59,26 +59,26 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     }
     val folders=remember(state.folders,folder,vault,query,collection){state.folders.filter{it.parentId==folder&&it.deletedAt==0L&&state.folderVaults[it.id].orEmpty()==vault&&collection=="All"&&query.isBlank()}.sortedBy{it.name.lowercase()}}
     Box(Modifier.fillMaxSize()){
-        LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=20.dp,end=20.dp,top=12.dp,bottom=160.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
-            item {SectionTitle(if(folder.isEmpty())"Your space." else current?.name?:"Folder",if(folder.isEmpty())"Make room for what matters." else folderPath(folder,state.folders))}
+        LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=160.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
+            item {SectionTitle(if(folder.isEmpty())"Your files" else current?.name?:"Folder",if(folder.isEmpty())"Everything you keep, in one place." else folderPath(folder,state.folders))}
             item {Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
                 MiniStat(state.items.count{it.deletedAt==0L&&it.versionId.isNotEmpty()}.toString(),"Files",Modifier.weight(1f))
                 MiniStat(formatBytes(state.items.filter{it.deletedAt==0L}.sumOf{it.size}),"Indexed content",Modifier.weight(1f))
             }}
             if(state.pendingOperations>0)item {InfoCard("Metadata waiting to sync","${state.pendingOperations} changes are saved on this phone. Your original files remain in Telegram.",Icons.Outlined.CloudSync)}
-            item {OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=RoundedCornerShape(18.dp),placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(Icons.Outlined.Tune,"Search filters")}})}
+            item {DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=DriveStyle.CardShape,placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(Icons.Outlined.Tune,"Search filters")}})}
             item {LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                items(listOf("All","Favorites","Offline","Trash")){label->FilterChip(collection==label,{collection=label;selected=emptySet()},label={Text(label)})}
-                item{AssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.setPreferences(state.preferences.copy(showGrid=value))}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)Icons.Outlined.ViewList else Icons.Outlined.GridView,null,Modifier.size(18.dp))})}
+                items(listOf("All","Favorites","Offline","Trash")){label->DriveFilterChip(collection==label,{collection=label;selected=emptySet()},label={Text(label)})}
+                item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.setPreferences(state.preferences.copy(showGrid=value))}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)Icons.Outlined.ViewList else Icons.Outlined.GridView,null,Modifier.size(18.dp))})}
             }}
             if(state.vaults.isNotEmpty()&&collection=="All")item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                item{FilterChip(vault.isEmpty(),{vault="";folder=""},label={Text("Personal")})}
-                items(state.vaults,key={it.id}){v->FilterChip(vault==v.id,{vault=v.id;folder=""},label={Text(v.label)},leadingIcon={Icon(if(v.id in state.unlockedVaultIds)Icons.Outlined.LockOpen else Icons.Outlined.Lock,null,Modifier.size(16.dp))})}
+                item{DriveFilterChip(vault.isEmpty(),{vault="";folder=""},label={Text("Personal")})}
+                items(state.vaults,key={it.id}){v->DriveFilterChip(vault==v.id,{vault=v.id;folder=""},label={Text(v.label)},leadingIcon={Icon(if(v.id in state.unlockedVaultIds)Icons.Outlined.LockOpen else Icons.Outlined.Lock,null,Modifier.size(16.dp))})}
             }}
             if(vault.isNotEmpty()&&vault !in state.unlockedVaultIds)item{InfoCard("Vault is locked","Unlock it from Settings → Vaults. File names and contents stay hidden while locked.",Icons.Outlined.Lock)}
             if(folder.isNotEmpty())item{TextButton(onClick={folder=current?.parentId?:"";selected=emptySet()}){Icon(Icons.AutoMirrored.Outlined.ArrowBack,null);Spacer(Modifier.width(6.dp));Text("Parent folder")}}
             if(state.syncing)item{LinearProgressIndicator(Modifier.fillMaxWidth());Text("Reconciling your Telegram index…",style=MaterialTheme.typography.labelSmall)}
-            items(folders,key={"folder:${it.id}"}){f->Surface(shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surface,modifier=Modifier.animateItem().combinedClickable(onClick={folder=f.id},onLongClick={folderAction=f})){
+            items(folders,key={"folder:${it.id}"}){f->Surface(shape=DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface,modifier=Modifier.animateItem().combinedClickable(onClick={folder=f.id},onLongClick={folderAction=f})){
                 Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.Folder,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(14.dp));Text(f.name,Modifier.weight(1f),fontWeight=FontWeight.Medium);IconButton(onClick={folderAction=f}){Icon(Icons.Outlined.MoreHoriz,"Folder actions")}}
             }}
             if(visible.isEmpty()&&folders.isEmpty()&&!state.syncing)item{Column(Modifier.fillMaxWidth().padding(vertical=38.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -94,9 +94,12 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             }else items(visible,key={it.id}){item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,false,Modifier.animateItem(),onClick={if(selected.isNotEmpty())selected=toggle(selected,item.id) else onPreview(item.id)},onLongClick={selected=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle)}
             item{Text("Stored in your own Saved Messages. Telegram account limits apply.",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         }
-        if(selected.isEmpty())ExtendedFloatingActionButton(onClick={addSheet=true},icon={Icon(Icons.Outlined.Add,null)},text={Text("Add files")},modifier=Modifier.align(Alignment.BottomEnd).padding(20.dp))
+        if(selected.isEmpty())ExtendedFloatingActionButton(onClick={addSheet=true},icon={Icon(Icons.Outlined.Add,null)},text={Text("Add files")},
+            containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary,
+            shape=DriveStyle.PillShape,elevation=FloatingActionButtonDefaults.elevation(0.dp),
+            modifier=Modifier.align(Alignment.BottomEnd).padding(20.dp))
         AnimatedVisibility(selected.isNotEmpty(),modifier=Modifier.align(Alignment.BottomCenter)){
-            Surface(tonalElevation=6.dp,shadowElevation=8.dp,shape=RoundedCornerShape(topStart=24.dp,topEnd=24.dp)){
+            Surface(color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(topStart=24.dp,topEnd=24.dp)){
                 Column(Modifier.fillMaxWidth().padding(12.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={selected=emptySet()}){Icon(Icons.Outlined.Close,"Clear selection")};Text("${selected.size} selected",Modifier.weight(1f));TextButton(onClick={selected=visible.map{it.id}.toSet()}){Text("Select all")}}
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
@@ -135,10 +138,10 @@ fun folderPath(id:String,folders:List<Folder>):String {
     while(current.isNotEmpty()&&seen.add(current)){val f=folders.firstOrNull{it.id==current}?:break;path.add(f.name);current=f.parentId}
     return (listOf("Home")+path.reversed()).joinToString(" / ")
 }
-@Composable private fun MiniStat(value:String,label:String,modifier:Modifier){Card(modifier,shape=RoundedCornerShape(18.dp),colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){Column(Modifier.padding(17.dp)){Text(value,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold);Text(label,style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
+@Composable private fun MiniStat(value:String,label:String,modifier:Modifier){Card(modifier,shape=DriveStyle.CardShape,colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){Column(Modifier.padding(17.dp)){Text(value,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold);Text(label,style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
 @OptIn(ExperimentalFoundationApi::class)
 @Composable fun NativeFileCard(item:Item,local:LocalItem?,encrypted:Boolean,selected:Boolean,grid:Boolean,modifier:Modifier=Modifier,onClick:()->Unit,onLongClick:()->Unit,onMenu:()->Unit,bundle:SessionBundle?=null){
-    Surface(modifier=modifier.fillMaxWidth().semantics{this.selected=selected}.combinedClickable(onClick=onClick,onLongClick=onLongClick,onLongClickLabel="Select file"),shape=RoundedCornerShape(17.dp),color=if(selected)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface){
+    Surface(modifier=modifier.fillMaxWidth().semantics{this.selected=selected}.combinedClickable(onClick=onClick,onLongClick=onLongClick,onLongClickLabel="Select file"),shape=DriveStyle.CardShape,color=if(selected)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface){
         if(grid)Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){FileThumbnail(item,bundle,Modifier.size(72.dp));Spacer(Modifier.weight(1f));IconButton(onClick=onMenu){Icon(Icons.Outlined.MoreHoriz,"File actions")}}
             Text(item.name,maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall);FileIndicators(item,local,encrypted)
