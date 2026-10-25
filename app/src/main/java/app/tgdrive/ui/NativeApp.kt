@@ -7,12 +7,10 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,8 +33,15 @@ data class SystemActions(
     val scanBackups: (String?,Boolean) -> Unit,
 )
 enum class NativeTab(val title: String, val icon: ImageVector) {
-    HOME("Home",Icons.Outlined.Home), GALLERY("Gallery",Icons.Outlined.PhotoLibrary), AUDIO("Audio",Icons.Outlined.AudioFile), SETTINGS("Settings",Icons.Outlined.Tune)
+    HOME("Home",DriveIcons.Home), GALLERY("Gallery",DriveIcons.PhotoLibrary), AUDIO("Audio",DriveIcons.AudioFile), SETTINGS("Settings",DriveIcons.Tune),
+    // Keep serialized enum names readable when Android restores a 0.3.0 activity.
+    FILES("Home",DriveIcons.Home), TRANSFERS("Activity",DriveIcons.SwapVert), BACKUPS("Backups",DriveIcons.Backup)
 }
+internal val navigationTabs = listOf(NativeTab.HOME,NativeTab.GALLERY,NativeTab.AUDIO,NativeTab.SETTINGS)
+internal val nativeTabSaver = Saver<NativeTab,Any>(save={it.name},restore={saved->
+    val name = if(saved is NativeTab) saved.name else saved as? String
+    navigationTabs.firstOrNull{it.name==name} ?: NativeTab.HOME
+})
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,7 +49,11 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     val auth by bundle.drive.state.collectAsStateWithLifecycle()
     val state by bundle.library.state.collectAsStateWithLifecycle()
     val profiles by pool.profiles.collectAsStateWithLifecycle()
-    var tab by rememberSaveable(bundle.profile.id) { mutableStateOf(NativeTab.HOME) }
+    var tab by rememberSaveable(bundle.profile.id, stateSaver=nativeTabSaver) { mutableStateOf(NativeTab.HOME) }
+    var homeRoute by rememberSaveable(bundle.profile.id) { mutableStateOf("home") }
+    var settingsRoute by rememberSaveable(bundle.profile.id) { mutableStateOf("home") }
+    var fileBack by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var folderTitle by remember { mutableStateOf("All files") }
     var accountSheet by remember { mutableStateOf(false) }
     var previewId by rememberSaveable(bundle.profile.id) { mutableStateOf("") }
     val pageState = rememberSaveableStateHolder()
@@ -62,17 +71,22 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
             NativePreview(item,bundle,system,onBack={previewId=""})
         }else{
             val signingIn = auth.login != LoginStep.READY
-            val showingSettings = !signingIn && state.loaded && tab == NativeTab.SETTINGS
+            val headerTitle = when {
+                signingIn -> "Sign in"
+                !state.loaded -> "Your library"
+                tab==NativeTab.HOME -> when(homeRoute){"files"->folderTitle;"activity"->"Activity";"backups"->"Backups";else->"Home"}
+                tab==NativeTab.SETTINGS -> settingsTitle(settingsRoute)
+                else -> tab.title
+            }
+            val back: (() -> Unit)? = when {
+                !signingIn && tab==NativeTab.HOME && homeRoute!="home" -> if(homeRoute=="files"&&fileBack!=null)fileBack else {{homeRoute="home"}}
+                !signingIn && tab==NativeTab.SETTINGS && settingsRoute!="home" -> {{settingsRoute=settingsParent(settingsRoute)}}
+                else -> null
+            }
             Scaffold(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
-                snackbarHost={SnackbarHost(snackbar)}, topBar={if(!showingSettings){
-                TopAppBar(title={Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    Icon(Icons.Outlined.CloudQueue,null,tint=MaterialTheme.colorScheme.primary)
-                    Text("TG Drive",style=MaterialTheme.typography.titleMedium)
-                }},actions={
-                    if(auth.login==LoginStep.READY)DriveCircleButton(Icons.Outlined.Refresh,"Sync metadata",{bundle.actions.run{bundle.library.sync()}},Modifier.padding(end=4.dp))
-                    TextButton(onClick={accountSheet=true}){Text(if(state.accountName.isBlank())"Account" else state.accountName.take(16));Icon(Icons.Outlined.ExpandMore,null,Modifier.size(18.dp))}
-                },colors=TopAppBarDefaults.topAppBarColors(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background))
-            }},bottomBar={if(auth.login==LoginStep.READY&&state.loaded)DriveNavigationBar(tab,{tab=it},state.tasks.any{it.state==TaskState.FAILED})}){padding->
+                snackbarHost={SnackbarHost(snackbar)}, topBar={
+                    DriveAppHeader(headerTitle,back,{accountSheet=true},auth.account,auth.accountId,auth.avatarFileId,bundle)
+            },bottomBar={if(auth.login==LoginStep.READY&&state.loaded)DriveNavigationBar(tab,{tab=it},state.tasks.any{it.state==TaskState.FAILED})}){padding->
                 when {
                     auth.login!=LoginStep.READY->AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.padding(padding))
                     !state.loaded->Column(Modifier.fillMaxSize().padding(padding).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
@@ -81,10 +95,10 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
                     }
                     else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={horizontalNavigation(targetState.ordinal > initialState.ordinal)},label="navigation") { page ->
                         pageState.SaveableStateProvider(page){when(page){
-                            NativeTab.HOME->HomePage(state,bundle,system,onPreview={previewId=it})
+                            NativeTab.HOME,NativeTab.FILES,NativeTab.TRANSFERS,NativeTab.BACKUPS->HomePage(state,bundle,system,onPreview={previewId=it},page=homeRoute,onPage={homeRoute=it},onFolderTitle={folderTitle=it},onFolderBack={fileBack=it})
                             NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previewId=it})
                             NativeTab.AUDIO->MediaPage(state,bundle,system,gallery=false,onPreview={previewId=it})
-                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME})
+                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME},page=settingsRoute,onPage={settingsRoute=it})
                         }}
                     }
                 }
@@ -95,9 +109,9 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
         Column(Modifier.fillMaxWidth().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("Your accounts",style=MaterialTheme.typography.headlineSmall)
             profiles.forEach { profile->DriveCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth()){
-                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.AccountCircle,null);Spacer(Modifier.width(12.dp));Text(profile.label,Modifier.weight(1f));if(profile.id==bundle.profile.id)Icon(Icons.Outlined.Check,null,tint=MaterialTheme.colorScheme.primary)}
+                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(DriveIcons.AccountCircle,null);Spacer(Modifier.width(12.dp));Text(profile.label,Modifier.weight(1f));if(profile.id==bundle.profile.id)Icon(DriveIcons.Check,null,tint=MaterialTheme.colorScheme.primary)}
             }}
-            TextButton(onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(Icons.Outlined.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
+            TextButton(onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(DriveIcons.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
             if(auth.login==LoginStep.READY)TextButton(onClick={bundle.actions.run{
                 require(state.tasks.none{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}){"Pause transfers before signing out."}
                 bundle.library.context.stopService(android.content.Intent(bundle.library.context,PlaybackService::class.java))
@@ -115,21 +129,21 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
 @Composable fun SectionTitle(title: String, subtitle: String? = null) {
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,style=MaterialTheme.typography.headlineMedium);if(subtitle!=null)Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
 }
-@Composable fun InfoCard(title: String, text: String, icon: ImageVector = Icons.Outlined.Info) {
+@Composable fun InfoCard(title: String, text: String, icon: ImageVector = DriveIcons.Info) {
     Card(shape=DriveStyle.CardShape,colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){
         Row(Modifier.fillMaxWidth().padding(20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {Icon(icon,null,tint=MaterialTheme.colorScheme.onSurfaceVariant);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(title,style=MaterialTheme.typography.titleSmall);Text(text,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
     }
 }
-@Composable fun ActionRow(title: String, subtitle: String = "", icon: ImageVector=Icons.Outlined.ChevronRight, onClick: ()->Unit) {
-    Surface(onClick=onClick,shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(horizontal=20.dp,vertical=17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
-        Icon(icon,null,tint=MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight,null,Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
+@Composable fun ActionRow(title: String, subtitle: String = "", icon: ImageVector=DriveIcons.ChevronRight, onClick: ()->Unit) {
+    Surface(onClick=onClick,shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=if(LocalDriveGroup.current)56.dp else 64.dp).padding(horizontal=20.dp,vertical=if(LocalDriveGroup.current)14.dp else 17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
+        Icon(icon,null,tint=MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(DriveIcons.KeyboardArrowRight,null,Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
     }}
 }
 
 @Composable
 internal fun DriveNavigationBar(tab: NativeTab, onSelect: (NativeTab) -> Unit, failedTransfers: Boolean = false) {
     NavigationBar(containerColor=MaterialTheme.colorScheme.background,tonalElevation=0.dp) {
-        NativeTab.entries.forEach { page -> NavigationBarItem(selected=tab==page,onClick={onSelect(page)},icon={
+        navigationTabs.forEach { page -> NavigationBarItem(selected=tab==page,onClick={onSelect(page)},icon={
             BadgedBox(badge={if(page==NativeTab.HOME && failedTransfers) Badge()}){Icon(page.icon,null)}
         },label={Text(page.title,style=MaterialTheme.typography.labelSmall)},colors=NavigationBarItemDefaults.colors(
             selectedIconColor=MaterialTheme.colorScheme.onSurface,selectedTextColor=MaterialTheme.colorScheme.onSurface,

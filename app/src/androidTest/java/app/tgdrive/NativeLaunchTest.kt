@@ -11,10 +11,10 @@ import org.junit.runner.RunWith
 class NativeLaunchTest {
     @get:Rule val compose=createAndroidComposeRule<MainActivity>()
     @Test fun actualActivityStartsWithNativeAccountConfiguration() {
-        compose.onNodeWithText("TG Drive").assertIsDisplayed()
+        compose.onNodeWithText("Sign in").assertIsDisplayed()
         compose.onNodeWithText("Connect your own app").assertIsDisplayed()
         compose.onNodeWithText("Continue").assertIsNotEnabled()
-        compose.onNodeWithText("Account").performClick()
+        compose.onNodeWithContentDescription("Manage accounts").performClick()
         compose.onNodeWithText("Your accounts").assertIsDisplayed()
     }
 }

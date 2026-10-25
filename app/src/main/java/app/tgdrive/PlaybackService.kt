@@ -22,7 +22,7 @@ class PlaybackService:MediaSessionService(){
     override fun onCreate(){
         super.onCreate();instance=this
         val app=application as DriveApp
-        player=ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(DriveDataSource.Factory(app.sessions))).build()
+        player=ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(DriveDataSource.Factory(app.sessions))).setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT,true).setHandleAudioBecomingNoisy(true).build()
         mediaSession=MediaSession.Builder(this,player).build()
         scope.launch{while(isActive){delay(10_000);savePosition()}}
     }
@@ -60,6 +60,7 @@ class PlaybackService:MediaSessionService(){
     companion object{
         const val PLAY="app.tgdrive.PLAY"
         @Volatile private var instance:PlaybackService?=null
+        fun pause(context:Context){androidx.core.content.ContextCompat.getMainExecutor(context).execute{instance?.player?.pause()}}
         fun stopProtected(context:Context){androidx.core.content.ContextCompat.getMainExecutor(context).execute{instance?.let{if(it.currentVault.isNotEmpty())it.player.stop()}}}
     }
 }

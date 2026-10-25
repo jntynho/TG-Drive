@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+<title id="title">TG Drive — Folded Cloud</title>
+<desc id="desc">An original white cloud and flowing folder mark on a cobalt and azure squircle.</desc>
+<defs>
+ <linearGradient id="blue" x1="0" y1="1024" x2="1024" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#1235CF"/><stop offset=".52" stop-color="#006BFF"/><stop offset="1" stop-color="#26D5EB"/></linearGradient>
+ <linearGradient id="fold" x1="730" y1="490" x2="795" y2="570" gradientUnits="userSpaceOnUse"><stop stop-color="#67F0F5"/><stop offset="1" stop-color="#18B8EC"/></linearGradient>
+</defs>
+<rect width="1024" height="1024" rx="224" fill="url(#blue)"/>
+<path d="M294 732C216 732 164 673 164 597C164 521 216 454 289 442C297 344 375 270 472 270C550 270 615 319 637 395C704 391 762 432 779 490C831 509 864 558 864 613C864 678 811 732 741 732Z M354 732C348 717 347 699 347 678V494C347 454 375 426 414 426H489C511 426 525 443 542 463C555 479 568 485 590 485H704C722 485 732 495 732 513V551C732 563 739 569 752 569H775C800 569 814 589 814 613V620C805 599 789 597 766 597H718C672 597 648 583 616 562L544 509C531 500 518 496 501 496H409C386 496 365 516 365 540V672C365 707 392 732 428 732Z" fill="#FFFFFF" fill-rule="evenodd"/>
+<path d="M731 493L793 562C780 553 767 551 751 551H743C736 551 732 546 732 538Z" fill="url(#fold)"/>
+</svg>

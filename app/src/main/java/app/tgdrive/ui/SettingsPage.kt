@@ -8,9 +8,6 @@ import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,10 +21,10 @@ import app.tgdrive.*
 import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 
-@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={}){
-    var page by rememberSaveable{mutableStateOf("home")};var confirmCache by remember{mutableStateOf(false)}
+@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit){
+    var confirmCache by remember{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
-    BackHandler { if(page!="home")page="home" else onClose() }
+    BackHandler { if(page!="home")onPage(settingsParent(page)) else onClose() }
     val editor = remember(bundle, state.accountId) { PreferenceEditor(state.preferences, bundle.library.scope,
         read={bundle.library.state.value.preferences}, save={update->
             bundle.library.checkAccount(state.accountId)
@@ -40,9 +37,9 @@ import app.tgdrive.library.*
     fun prefs(update:(Preferences)->Preferences) { editor.update(update) }
     AnimatedContent(page,transitionSpec={horizontalNavigation(targetState != "home")},label="settings-detail"){current->
         Column(Modifier.fillMaxSize()){
-            DrivePageHeader(settingsTitle(current),onBack={if(current=="home")onClose() else page="home"},close=current=="home")
+
             when(current){
-                "home"->SettingsHome(state){destination->page=destination;if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}
+                "home"->SettingsHome(state){destination->onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}
                 "vaults"->VaultsPage(state,bundle)
                 "connections"->ConnectionsPage(state,bundle)
                 else->LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -66,33 +63,33 @@ import app.tgdrive.library.*
                             item{Text("Background scan interval",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(1,6,12,24)){h->DriveFilterChip(editor.value.scanIntervalHours==h,{prefs{it.copy(scanIntervalHours=h)}},label={Text("${h}h")})}}}
                         }
                         "storage"->{
-                            item{InfoCard("App cache: ${formatBytes(state.cacheBytes)}","Offline copies: ${formatBytes(state.offlineBytes)}. Pending upload sources are kept separately and are not removed by cache cleaning.",Icons.Outlined.Storage)}
+                            item{InfoCard("App cache: ${formatBytes(state.cacheBytes)}","Offline copies: ${formatBytes(state.offlineBytes)}. Pending upload sources are kept separately and are not removed by cache cleaning.",DriveIcons.Storage)}
                             item{DriveButton(onClick={confirmCache=true}){Text("Clear unpinned app cache")}}
                             item{Text("Cache budget",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(128,256,512,1024)){m->DriveFilterChip(editor.value.cacheMiB==m,{prefs{it.copy(cacheMiB=m)}},label={Text("$m MiB")})}}}
-                            item{ActionRow("Inspect Telegram native cache","Separate from the app's verified offline copies",Icons.Outlined.Folder){bundle.actions.run{
+                            item{ActionRow("Inspect Telegram native cache","Separate from the app's verified offline copies",DriveIcons.Folder){bundle.actions.run{
                                 val stats=bundle.drive.call(org.drinkless.tdlib.TdApi.GetStorageStatisticsFast()) as org.drinkless.tdlib.TdApi.StorageStatisticsFast
                                 info="Telegram files: ${formatBytes(stats.filesSize)}\nTelegram database: ${formatBytes(stats.databaseSize)}\nNative cache is managed independently. Your original cloud messages are not a cache."
                             }}}
-                            item{ActionRow("Free verified local originals","Review copies whose downloaded content was verified",Icons.Outlined.CleaningServices){bundle.actions.run{cleanup=bundle.actions.cleanupCandidates()}}}
+                            item{ActionRow("Free verified local originals","Review copies whose downloaded content was verified",DriveIcons.CleaningServices){bundle.actions.run{cleanup=bundle.actions.cleanupCandidates()}}}
                             item{Text("Trash retention",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(7,30,90)){d->DriveFilterChip(editor.value.trashDays==d,{prefs{it.copy(trashDays=d)}},label={Text("$d days")})}}}
                             item{InfoCard("Retention is not a remote timer","Expired Trash is cleaned when eligible background work runs or the app performs cleanup. Vaults may need unlocking. Independent copies of important files are still recommended.")}
                         }
                         "index"->{
                             item{DriveGroup{
-                                ActionRow("Sync latest metadata",icon=Icons.Outlined.Sync){bundle.actions.run{bundle.library.sync()}}
+                                ActionRow("Sync latest metadata",icon=DriveIcons.Sync){bundle.actions.run{bundle.library.sync()}}
                                 DriveDivider()
-                                ActionRow("Full metadata reconciliation","Does not erase the existing local library",Icons.Outlined.ManageSearch){bundle.actions.run{bundle.library.sync(full=true)}}
+                                ActionRow("Full metadata reconciliation","Does not erase the existing local library",DriveIcons.ManageSearch){bundle.actions.run{bundle.library.sync(full=true)}}
                                 DriveDivider()
-                                ActionRow("Save cloud index checkpoint","Includes folders, tags, versions and encrypted vault descriptors",Icons.Outlined.CloudUpload){bundle.actions.run{bundle.library.saveCloudIndex()}}
+                                ActionRow("Save cloud index checkpoint","Includes folders, tags, versions and encrypted vault descriptors",DriveIcons.CloudUpload){bundle.actions.run{bundle.library.saveCloudIndex()}}
                                 DriveDivider()
-                                ActionRow("Restore newest cloud checkpoint","Merge and preserve conflicts; never reset login",Icons.Outlined.Restore){bundle.actions.run{bundle.library.restoreCloudIndex()}}
+                                ActionRow("Restore newest cloud checkpoint","Merge and preserve conflicts; never reset login",DriveIcons.Restore){bundle.actions.run{bundle.library.restoreCloudIndex()}}
                             }}
-                            item{ActionRow("Export index to a file","No Telegram sessions or device-only source URIs",Icons.Outlined.SaveAlt,onClick=system.exportIndex)}
-                            item{ActionRow("Import index file","Only a matching Telegram account is accepted",Icons.Outlined.FileOpen,onClick=system.importIndex)}
+                            item{ActionRow("Export index to a file","No Telegram sessions or device-only source URIs",DriveIcons.SaveAlt,onClick=system.exportIndex)}
+                            item{ActionRow("Import index file","Only a matching Telegram account is accepted",DriveIcons.FileOpen,onClick=system.importIndex)}
                             item{InfoCard("Metadata is not file content","An index backup cannot recreate deleted Telegram documents. Public metadata names remain readable in an exported index; vault bodies remain encrypted and require your separate recovery credentials.")}
                         }
                         "privacy"->{
-                            item{ActionRow("Encrypted vaults","Create, unlock or lock protected content",Icons.Outlined.EnhancedEncryption){page="vaults"}}
+                            item{ActionRow("Encrypted vaults","Create, unlock or lock protected content",DriveIcons.EnhancedEncryption){onPage("vaults")}}
                             item{SettingSwitch("App lock","Use device credentials or biometrics after 30 seconds away.",state.preferences.lockEnabled,system.setAppLock)}
                             item{DriveGroup{
                                 SettingSwitch("Hide notification details","Use a generic transfer notification.",editor.value.hideNotifications){v->prefs{it.copy(hideNotifications=v)}}
@@ -101,7 +98,7 @@ import app.tgdrive.library.*
                                 DriveDivider()
                                 SettingSwitch("Backup health notifications","Only if Android notification permission is granted.",editor.value.backupNotifications){v->prefs{it.copy(backupNotifications=v)}}
                             }}
-                            item{InfoCard("App lock is not cloud encryption","Files outside a vault are Telegram cloud documents. They can still be accessed from your Telegram account. Vault keys, index encryption and screen lock are separate protections.",Icons.Outlined.Shield)}
+                            item{InfoCard("App lock is not cloud encryption","Files outside a vault are Telegram cloud documents. They can still be accessed from your Telegram account. Vault keys, index encryption and screen lock are separate protections.",DriveIcons.Shield)}
                         }
                         "organize"->{
                             item{DriveButton(onClick={bundle.actions.run{bundle.actions.previewOrganization(false)}}){Text("Suggest folders by file type")}}
@@ -122,9 +119,9 @@ import app.tgdrive.library.*
                         }
                         "diagnostics"->{
                             item{DriveGroup{
-                                ActionRow("Check message availability","Does not delete records for a temporary network failure",Icons.Outlined.FactCheck){bundle.actions.run{bundle.actions.checkAvailability()}}
+                                ActionRow("Check message availability","Does not delete records for a temporary network failure",DriveIcons.FactCheck){bundle.actions.run{bundle.actions.checkAvailability()}}
                                 DriveDivider()
-                                ActionRow("Reconcile metadata from Telegram","Keep valid local and concurrent changes",Icons.Outlined.Sync){bundle.actions.run{bundle.library.sync(full=true)}}
+                                ActionRow("Reconcile metadata from Telegram","Keep valid local and concurrent changes",DriveIcons.Sync){bundle.actions.run{bundle.library.sync(full=true)}}
                             }}
                             item{SelectionContainer{Text(bundle.actions.diagnosticText(),style=MaterialTheme.typography.bodySmall)}}
                             items(state.healthProblems){p->Text(p,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
@@ -132,7 +129,7 @@ import app.tgdrive.library.*
                         }
                         "about"->{
                             item{SectionTitle("TG Drive","${BuildConfig.VERSION_NAME} · build ${BuildConfig.VERSION_CODE}")}
-                            item{InfoCard("Independent Telegram client","Your files use your own account. No claim of unlimited storage, guaranteed SMS or permanent provider availability is made.",Icons.Outlined.CloudQueue)}
+                            item{InfoCard("Independent Telegram client","Your files use your own account. No claim of unlimited storage, guaranteed SMS or permanent provider availability is made.",DriveIcons.CloudQueue)}
                             item{SelectionContainer{Text("Signing certificate SHA-256:\n${signingFingerprint(bundle.library.context)}",style=MaterialTheme.typography.bodySmall)}}
                             item{InfoCard("Updates preserve identity","Install updates signed with the same certificate. Cache-only signing-key storage is a test distribution convenience; keep a secure long-lived key backup for production.")}
                             item{InfoCard("Encryption implementation","Vault files use Tink authenticated streaming encryption with password and separate recovery wraps. The application format and native-library provenance still need independent security review before production assurances.")}
@@ -166,3 +163,5 @@ fun signingFingerprint(context:android.content.Context):String=runCatching{
     val cert=if(android.os.Build.VERSION.SDK_INT>=28)info.signingInfo?.apkContentsSigners?.firstOrNull() else @Suppress("DEPRECATION") info.signatures?.firstOrNull()
     java.security.MessageDigest.getInstance("SHA-256").digest(cert!!.toByteArray()).joinToString(":"){"%02X".format(it)}
 }.getOrDefault("Unavailable")
+
+internal fun settingsParent(page:String) = if(page=="vaults") "privacy" else "home"

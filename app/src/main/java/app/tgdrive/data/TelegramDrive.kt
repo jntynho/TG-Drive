@@ -19,6 +19,8 @@ import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+class TelegramRequestException(val code:Int,message:String):IllegalStateException(message)
+
 enum class LoginStep { CONFIGURE, CONNECTING, CONNECTION_ERROR, PHONE, CODE, PASSWORD, OTHER_DEVICE, READY, UNSUPPORTED, CLOSED }
 enum class TelegramNetwork { UNKNOWN, WAITING_FOR_NETWORK, CONNECTING, CONNECTING_TO_PROXY, UPDATING, READY }
 data class DriveState(
@@ -36,6 +38,7 @@ data class DriveState(
     val authError: String? = null,
     val network: TelegramNetwork = TelegramNetwork.UNKNOWN,
     val accountId: Long = 0,
+    val avatarFileId: Int = 0,
 )
 
 class TelegramDrive internal constructor(
@@ -159,7 +162,7 @@ class TelegramDrive internal constructor(
         if (td == null) { c.resumeWithException(IllegalStateException("Telegram is not connected.")); return@suspendCancellableCoroutine }
         td.send(function) { result ->
             if (c.isActive) {
-                if (result is TdApi.Error) c.resumeWithException(IllegalStateException(safeReason(readableError(result))))
+                if (result is TdApi.Error) c.resumeWithException(TelegramRequestException(result.code,safeReason(readableError(result))))
                 else c.resume(result)
             }
         }
@@ -184,7 +187,7 @@ class TelegramDrive internal constructor(
                 else if (update.message.chatId == chatId) earlyResults[update.oldMessageId] = Result.success(update.message)
             }
             is TdApi.UpdateMessageSendFailed -> {
-                val error = IllegalStateException(readableError(update.error))
+                val error = TelegramRequestException(update.error.code,readableError(update.error))
                 sent.remove(update.oldMessageId)?.completeExceptionally(error)
                     ?: run { if (update.message.chatId == chatId) earlyResults[update.oldMessageId] = Result.failure(error) }
             }
@@ -192,6 +195,7 @@ class TelegramDrive internal constructor(
             is TdApi.UpdateDeleteMessages -> if (update.chatId == chatId && update.isPermanent) {
                 mutable.update { it.copy(files = it.files.filterNot { f -> f.messageId in update.messageIds }) }; persist()
             }
+            is TdApi.UpdateUser -> if(update.user.id==state.value.accountId) mutable.update{it.copy(account=update.user.firstName,avatarFileId=update.user.profilePhoto?.small?.id?:0)}
             is TdApi.UpdateFile -> if (update.file.id == activeFileId) {
                 val file = update.file
                 val total = maxOf(file.size, file.expectedSize)
@@ -301,7 +305,7 @@ class TelegramDrive internal constructor(
             chatId = chat.id
             store = IndexStore(context, me.id)
             val (files, folders) = withContext(Dispatchers.IO) { store!!.read() }
-            mutable.update { it.copy(accountId = me.id, account = me.firstName, files = files, folders = folders) }
+            mutable.update { it.copy(accountId = me.id, account = me.firstName, avatarFileId = me.profilePhoto?.small?.id ?: 0, files = files, folders = folders) }
             if (!libraryManaged) refresh()
         }.onFailure { if (it is CancellationException) throw it; fail(it.message ?: "Could not open Saved Messages.") }
     }

@@ -5,8 +5,6 @@ import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -22,11 +20,11 @@ import java.util.Date
     var value by remember{mutableStateOf(initial)}
     AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={DriveTextField(value,{value=it},label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())},confirmButton={TextButton(onClick={onConfirm(value)},enabled=value.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
-@Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,onConfirm:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={Text(text)},confirmButton={TextButton(onClick=onConfirm){Text(confirm)}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})}
+@Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,onConfirm:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={Text(text,Modifier.verticalScroll(rememberScrollState()))},confirmButton={TextButton(onClick=onConfirm){Text(confirm)}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})}
 @Composable fun FolderPicker(state:LibraryState,current:String,onDismiss:()->Unit,onPick:(String)->Unit){
     AlertDialog(onDismissRequest=onDismiss,title={Text("Choose destination")},text={LazyColumn(Modifier.heightIn(max=420.dp)){
-        item{TextButton(onClick={onPick("")}){Icon(Icons.Outlined.Home,null);Text("Home")}}
-        items(state.folders.filter{it.deletedAt==0L&&it.id!=current}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)}){Icon(Icons.Outlined.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
+        item{TextButton(onClick={onPick("")}){Icon(DriveIcons.Home,null);Text("Home")}}
+        items(state.folders.filter{it.deletedAt==0L&&it.id!=current}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)}){Icon(DriveIcons.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
     }},confirmButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,28 +73,36 @@ import java.util.Date
             Text(if(state.itemVaults[item.id].orEmpty().isEmpty())"Telegram cloud storage is not end-to-end encrypted by this app for this file." else "Content and metadata belong to an encrypted vault.",style=MaterialTheme.typography.bodySmall)
         }},confirmButton={TextButton(onClick=onDismiss){Text("Done")}})
         else->ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().heightIn(max=650.dp).verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-            Text(item.name,style=MaterialTheme.typography.titleLarge)
+            Text(item.name,style=MaterialTheme.typography.titleLarge,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             if(item.deletedAt>0){
-                ActionRow("Restore",icon=Icons.Outlined.Restore){perform{bundle.actions.restore(listOf(item.id))}}
-                ActionRow("Delete permanently",icon=Icons.Outlined.DeleteForever){mode="purge"}
+                ActionRow("Restore",icon=DriveIcons.Restore){perform{bundle.actions.restore(listOf(item.id))}}
+                ActionRow("Delete permanently",icon=DriveIcons.DeleteForever){mode="purge"}
             }else{
+                DriveGroup {
                 ActionRow("Preview",icon=fileIcon(item.mime),onClick=onPreview)
-                ActionRow("Save to device",icon=Icons.Outlined.Download){onDismiss();system.save(item)}
-                ActionRow("Share a copy",icon=Icons.Outlined.Share){onDismiss();system.shareExternal(item)}
-                ActionRow(if(item.favorite)"Remove from favorites" else "Add to favorites",icon=Icons.Outlined.StarOutline){perform{bundle.actions.favorite(item.id)}}
-                ActionRow(if(state.local[item.id]?.pinnedVersion==item.versionId)"Remove offline copy" else "Keep offline",icon=Icons.Outlined.OfflinePin){perform{if(state.local[item.id]?.pinnedVersion==item.versionId)bundle.actions.unpin(item.id) else {bundle.transfers.enqueue(TaskKind.PIN,item);system.startTransfers()}}}
-                ActionRow("Verify downloaded content",icon=Icons.Outlined.Verified){perform{bundle.transfers.enqueue(TaskKind.VERIFY,item);system.startTransfers()}}
-                ActionRow("Rename",icon=Icons.Outlined.Edit){mode="rename"}
-                ActionRow("Move",icon=Icons.Outlined.DriveFileMove){mode="move"}
-                ActionRow("Tags",icon=Icons.Outlined.Label){mode="tags"}
-                ActionRow("Versions / replace content",icon=Icons.Outlined.History){mode="versions"}
-                ActionRow("Upload new content version",icon=Icons.Outlined.Upload){onDismiss();system.upload(item.folderId,state.itemVaults[item.id].orEmpty(),item.id)}
-                if(item.mime.startsWith("image/")||item.mime=="application/pdf")ActionRow("Extract text on this device","Latin text · up to 50 PDF pages",Icons.Outlined.DocumentScanner){perform{bundle.transfers.enqueue(TaskKind.OCR,item);system.startTransfers()}}
-                ActionRow("Create public copy link","Requires your optional sharing server",Icons.Outlined.Link){mode="share"}
-                ActionRow("Copy to WebDAV","Requires your optional HTTPS endpoint",Icons.Outlined.CloudUpload){mode="webdav"}
-                ActionRow("Move to Trash",icon=Icons.Outlined.DeleteOutline){mode="trash"}
+                ActionRow("Save to device",icon=DriveIcons.Download){onDismiss();system.save(item)}
+                ActionRow("Share a copy",icon=DriveIcons.Share){onDismiss();system.shareExternal(item)}
+                ActionRow(if(item.favorite)"Remove from favorites" else "Add to favorites",icon=DriveIcons.StarOutline){perform{bundle.actions.favorite(item.id)}}
+                }
+                DriveGroup {
+                ActionRow(if(state.local[item.id]?.pinnedVersion==item.versionId)"Remove offline copy" else "Keep offline",icon=DriveIcons.OfflinePin){perform{if(state.local[item.id]?.pinnedVersion==item.versionId)bundle.actions.unpin(item.id) else {bundle.transfers.enqueue(TaskKind.PIN,item);system.startTransfers()}}}
+                ActionRow("Verify downloaded content",icon=DriveIcons.Verified){perform{bundle.transfers.enqueue(TaskKind.VERIFY,item);system.startTransfers()}}
+                }
+                DriveGroup {
+                ActionRow("Rename",icon=DriveIcons.Edit){mode="rename"}
+                ActionRow("Move",icon=DriveIcons.DriveFileMove){mode="move"}
+                ActionRow("Tags",icon=DriveIcons.Label){mode="tags"}
+                ActionRow("Versions / replace content",icon=DriveIcons.History){mode="versions"}
+                ActionRow("Upload new content version",icon=DriveIcons.Upload){onDismiss();system.upload(item.folderId,state.itemVaults[item.id].orEmpty(),item.id)}
+                }
+                DriveGroup {
+                if(item.mime.startsWith("image/")||item.mime=="application/pdf")ActionRow("Extract text on this device","Latin text · up to 50 PDF pages",DriveIcons.DocumentScanner){perform{bundle.transfers.enqueue(TaskKind.OCR,item);system.startTransfers()}}
+                ActionRow("Create public copy link","Requires your optional sharing server",DriveIcons.Link){mode="share"}
+                ActionRow("Copy to WebDAV","Requires your optional HTTPS endpoint",DriveIcons.CloudUpload){mode="webdav"}
+                }
+                ActionRow("Move to Trash",icon=DriveIcons.DeleteOutline){mode="trash"}
             }
-            ActionRow("Details and integrity",icon=Icons.Outlined.Info){mode="info"};Spacer(Modifier.height(12.dp))
+            ActionRow("Details and integrity",icon=DriveIcons.Info){mode="info"};Spacer(Modifier.height(12.dp))
         }}
     }
 }
@@ -116,7 +122,7 @@ import java.util.Date
         Text("This exports a decrypted copy to your server, even for vault files. The server operator can read that copy. Revocation cannot recall downloaded copies.")
         Text("Expires in ${hours.toInt()} hours");Slider(hours,{hours=it},valueRange=1f..168f)
         DriveTextField(password,{password=it},label={Text("Optional link password")},visualTransformation=PasswordVisualTransformation(),singleLine=true)
-        Row{Checkbox(consent,{consent=it});Text("I approve exporting this copy.",style=MaterialTheme.typography.bodySmall)}
+        DriveCheckboxRow("I approve exporting this copy.",consent,{consent=it})
     }},confirmButton={TextButton(onClick={bundle.actions.run{bundle.transfers.enqueue(TaskKind.SHARE,item,payload=ShareOptions(hours.toInt()).json(),sharePassword=password);start()};onDismiss()},enabled=consent&&state.preferences.sharingUrl.isNotBlank()){Text("Create link")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,7 +132,7 @@ import java.util.Date
         SectionTitle("Existing Saved Messages","Only selected references are imported. Original captions are retained.")
         DriveButton(onClick={val rows=state.incoming.filter{it.messageId in selected};bundle.actions.run{rows.forEach{bundle.library.importMessage(it,folder)}};onDismiss()},enabled=selected.isNotEmpty()){Text("Import ${selected.size} selected")}
         LazyColumn(Modifier.heightIn(max=450.dp)){items(state.incoming,key={it.messageId}){candidate->Row(Modifier.fillMaxWidth().padding(vertical=8.dp)){
-            Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column{Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
+            Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column(Modifier.weight(1f)){Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
         }}}
     }}
 }

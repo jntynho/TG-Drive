@@ -23,6 +23,8 @@ import java.util.zip.ZipOutputStream
 class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScope, private val gateOverride: ((TransferTask) -> Pair<TaskState, String>?)? = null) {
     private val context get() = repository.context
     private val runLock = Mutex()
+    private var preparation: Deferred<Unit>? = null
+    private var preparationId = ""
     private var active: Job? = null
     private var activeId = ""
     private var activeFileId = 0
@@ -125,8 +127,9 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         while (now() < end) {
             currentCoroutineContext().ensureActive(); repository.checkAccount(account)
             val next = repository.db().tasks().sortedByDescending{it.priority}.firstOrNull {
-                it.profileId == repository.session.profileId && it.state !in terminal && it.state !in setOf(TaskState.PAUSED, TaskState.FAILED) && it.nextAttemptAt <= now()
+                it.profileId == repository.session.profileId && it.state !in terminal && it.state !in setOf(TaskState.PAUSED, TaskState.FAILED,TaskState.SYNCING_METADATA) && (it.kind!=TaskKind.UPLOAD || repository.sender.until<=now()) && it.nextAttemptAt <= now()
             } ?: break
+            if(preparationId==next.id){preparation?.await();preparation=null;preparationId=""}
             val gate = gate(next)
             if (gate != null) {
                 repository.setTask(next.copy(state = gate.first, error = gate.second, speedBytesPerSecond = 0))
@@ -134,6 +137,10 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 val eligible = repository.db().tasks().any { it.id != next.id && it.state == TaskState.QUEUED && gate(it) == null }
                 if (!eligible) break
                 repository.setTask(task(next.id).copy(nextAttemptAt = now() + 60_000)); continue
+            }
+            if(preparation==null) {
+                val following=repository.state.value.tasks.firstOrNull{it.id!=next.id&&it.kind==TaskKind.UPLOAD&&it.state==TaskState.QUEUED&&it.vaultId.isEmpty()&&gate(it)==null}
+                if(following!=null){preparationId=following.id;preparation=scope.async(Dispatchers.IO){prepareNext(following)}}
             }
             activeId = next.id; progressAt = 0; progressBytes = 0
             supervisorScope {
@@ -151,10 +158,10 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                         }
                         repository.checkAccount(account)
                         val current = task(next.id)
-                        if (current.state == TaskState.COMPLETED) runCatching { completed(current) }.onFailure { repository.report(it) }
+                        if (current.state == TaskState.COMPLETED) notifyCompleted(current)
                         else if (current.state in setOf(TaskState.QUEUED,TaskState.PREPARING,TaskState.TRANSFERRING)) {
                             val result = current.copy(state = TaskState.COMPLETED, done = current.total, error = "", speedBytesPerSecond = 0)
-                            repository.setTask(result); runCatching { completed(result) }.onFailure { repository.report(it) }
+                            repository.setTask(result); notifyCompleted(result)
                         }
                     } catch (e: CancellationException) {
                         withContext(NonCancellable) {
@@ -168,7 +175,12 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                     }
                     catch (e: Exception) {
                         repository.checkAccount(account)
-                        val current = task(next.id); val attempts = current.attempts + 1
+                        val current = task(next.id)
+                        if(e is SendCooldownException) {
+                            repository.setTask(current.copy(state=TaskState.RETRY_WAIT,nextAttemptAt=e.until,error="Telegram send limit. Waiting for the account countdown.",speedBytesPerSecond=0))
+                            return@launch
+                        }
+                        val attempts = current.attempts + 1
                         val retry = repository.state.value.preferences.autoRetry && attempts < 3 && !permanent(e)
                         val wait = floodWait(e.message ?: "") ?: (30_000L * (1L shl attempts))
                         repository.setTask(current.copy(state = if (retry) TaskState.RETRY_WAIT else TaskState.FAILED, attempts = attempts,
@@ -185,11 +197,44 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 try { active!!.join() } finally { monitor.cancelAndJoin(); active = null; activeId = ""; activeFileId = 0 }
             }
         }
-        repository.flush()
+        try{repository.flush()}catch(e:SendCooldownException){repository.notice("Telegram paused sending. Your queue and uploaded parts are saved; it will resume automatically.")}
+        repository.finalizeSyncedUploads()
+        repository.state.value.tasks.filter{it.state==TaskState.COMPLETED&&!it.completionNotified}.forEach{notifyCompleted(it)}
+        repository.maintainCache()
         if(repository.db().tasks().any{it.state !in terminal && it.state !in setOf(TaskState.PAUSED,TaskState.FAILED,TaskState.WAITING_FOR_UNLOCK)})wake?.invoke()
         true
         }
+        preparation?.cancelAndJoin();preparation=null;preparationId=""
         if(finished!=true)wake?.invoke()
+    }
+    /** One bounded, private snapshot ahead. Vault sources stay on the encrypted path. */
+    private suspend fun prepareNext(initial:TransferTask) {
+        val limit=16L*1024*1024
+        val uri=Uri.parse(initial.source)
+        val directory=File(context.filesDir,"transfer-staging/${initial.profileId}/${initial.id}")
+        val output=File(directory,"source.snapshot")
+        val partial=File(directory,"source.partial")
+        try {
+            val size=if(uri.scheme=="file")File(uri.path!!).length()else context.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()&&!it.isNull(0))it.getLong(0)else -1}?:-1
+            if(size !in 1..limit || context.filesDir.usableSpace<size*2+64L*1024*1024)return
+            val before=task(initial.id)
+            if(before.state!=TaskState.QUEUED||before.sourceSha256.isNotEmpty()||before.payload.model<UploadSpec>().preparedSource)return
+            directory.mkdirs()
+            context.contentResolver.openInputStream(uri)?.use{input->partial.outputStream().use{out->
+                check(copyChecked(input,out,limit)==size){"Source changed during preparation"}
+            }}?:return
+            val hash=partial.sha256()
+            currentCoroutineContext().ensureActive();repository.checkAccount(initial.accountId)
+            if(task(initial.id).state!=TaskState.QUEUED)return
+            check(partial.renameTo(output))
+            val current=task(initial.id)
+            repository.setTask(current.copy(payload=current.payload.model<UploadSpec>().copy(preparedSource=true,preparedHash=hash,preparedSize=size).json()))
+        } catch(e:CancellationException){throw e}catch(_:Exception){output.delete()}
+        finally{partial.delete()}
+    }
+    private suspend fun notifyCompleted(task:TransferTask) {
+        try { completed(task);repository.setTask(task.copy(completionNotified=true)) }
+        catch(e:CancellationException){throw e}catch(e:Exception){repository.report(e)}
     }
     private fun gate(task: TransferTask): Pair<TaskState, String>? {
         gateOverride?.let { return it(task) }
@@ -221,15 +266,18 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         var current = task(initial.id)
         repository.setTask(current.copy(state = TaskState.PREPARING, error = ""))
         var spec = current.payload.model<UploadSpec>()
+        val snapshot=File(context.filesDir,"transfer-staging/${current.profileId}/${current.id}/source.snapshot")
+        val sourceUri=if(spec.preparedSource&&snapshot.exists())Uri.fromFile(snapshot)else Uri.parse(current.source)
         val chunk = spec.chunkBytes.takeIf { it > 0 } ?: repository.state.value.preferences.chunkMiB.coerceIn(1, 1900) * 1024L * 1024
         val finishedContent = current.sourceSha256.isNotEmpty() && current.parts.sumOf { it.plainSize } == current.total
         if (!finishedContent) {
             val digest = MessageDigest.getInstance("SHA-256"); var length = 0L
-            context.contentResolver.openInputStream(Uri.parse(current.source))?.use { input ->
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 val buffer = ByteArray(128 * 1024)
                 while (true) { ensureActive(); val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n); length += n }
             } ?: error("Source permission is unavailable. Select the file again.")
             val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            if(sourceUri.scheme=="file" && sourceUri.path==snapshot.path)require(hash==spec.preparedHash&&length==spec.preparedSize){"Prepared upload snapshot changed."}
             require(current.sourceSha256.isEmpty() || hash == current.sourceSha256) { "Source content changed since the interrupted upload. Start a new upload." }
             val duplicate = repository.state.value.items.firstOrNull { it.sha256 == hash && repository.itemVault(it.id) == current.vaultId && it.deletedAt == 0L && it.versionId.isNotEmpty() && repository.state.value.versions.any { version -> version.id == it.versionId && version.itemId == it.id } }
             if (!current.allowDuplicate && repository.state.value.preferences.detectDuplicates && duplicate != null && duplicate.id != current.itemId && usableDuplicate(duplicate)) {
@@ -261,7 +309,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 if (!sourceFile.exists()) {
                     val temp = File(directory, "part-$index.partial")
                     try {
-                        context.contentResolver.openInputStream(Uri.parse(current.source))!!.use { input ->
+                        context.contentResolver.openInputStream(sourceUri)!!.use { input ->
                             skipExactly(input, index * chunk)
                             val bounded = BoundedInput(input, bytes, currentCoroutineContext()[Job])
                             temp.outputStream().use { output ->
@@ -290,7 +338,6 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
             val part = Part(recovered.id, index, bytes, content.document.document.size, caption.storedSha256, current.vaultId.isNotEmpty())
             val pace=repository.state.value.preferences.uploadPaceKiB
             spec=task(initial.id).payload.model<UploadSpec>().copy(paceUntil=if(pace>0)now()+maxOf(0,part.storedSize*1000/(pace*1024L)-(now()-sendStarted))else 0)
-            repository.mutate{it.put("settings","uploadPaceUntil",spec.paceUntil.toString())}
             current = task(initial.id).copy(parts = current.parts + part, pendingMessageId = 0, pendingPartPath = "", payload=spec.json(), done = (current.parts + part).sumOf { it.plainSize })
             repository.setTask(current); sourceFile.delete(); activeFileId = 0
         }
@@ -303,7 +350,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 val receipt=repository.db().get("sources","cloud-thumb:${current.versionId}")?.model<Part>()
                 if(receipt!=null)thumb=repository.remote.recoverPending(receipt.messageId)
             }
-            val bytes = if(thumb==null) try{ThumbnailTools(repository).create(Uri.parse(current.source),spec.mime)}catch(e:CancellationException){throw e}catch(_:Exception){null} else null
+            val bytes = if(thumb==null) try{ThumbnailTools(repository).create(sourceUri,spec.mime)}catch(e:CancellationException){throw e}catch(_:Exception){null} else null
             if(thumb==null && bytes!=null) {
                 thumbFile.outputStream().use{out->if(current.vaultId.isEmpty())out.write(bytes) else repository.vaults.encrypt(current.vaultId,bytes.inputStream(),out,"${current.itemId}/${current.versionId}/-1")}
                 val caption=CloudCodec.THUMB+PartCaption(current.itemId,current.versionId,-1,1,bytes.size.toLong(),thumbFile.sha256(),current.vaultId.isNotEmpty()).json()
@@ -324,7 +371,8 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
             versionId = current.versionId, size = current.total, sha256 = current.sourceSha256, modifiedAt = now(), deletedAt = 0)
         val version = Version(current.versionId, item.id, current.total, current.sourceSha256, current.parts, thumbnail=spec.thumbnail)
         if (previous?.versionId != version.id) repository.saveUploaded(item, version, current.vaultId, current.source, current.accountId)
-        repository.flush()
+        repository.setTask(task(initial.id).copy(state=TaskState.SYNCING_METADATA,done=current.total,error="Content uploaded. Saving library information…",speedBytesPerSecond=0))
+        if(repository.db().pending().size>=24)repository.flush()
         directory.deleteRecursively()
     }
     private suspend fun usableDuplicate(item:Item):Boolean {

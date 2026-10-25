@@ -22,7 +22,13 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
     private val initializationRevision = MutableStateFlow(0)
     val state = mutable.asStateFlow()
     val vaults = VaultManager()
-    val remote = TelegramStorage(session)
+    val sender = TelegramSendCoordinator(persist={until->
+        mutate{it.put("settings","sendCooldownUntil",until.toString())}
+        mutable.update{it.copy(sendCooldownUntil=until)}
+    })
+    val remote = TelegramStorage(session,sender)
+    private val flushing = Mutex()
+    private var maintainedAt=0L
     var cache: ContentCache? = null; private set
     var database: LibraryDatabase? = null; private set
     private val writes = Mutex()
@@ -49,9 +55,11 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
                             db().tasks().filter { it.state in listOf(TaskState.PREPARING, TaskState.TRANSFERRING) }.forEach {
                                 db().putTask(it.copy(state = TaskState.PAUSED, error = "Interrupted by Android. Resume to reconcile the saved transfer."))
                             }
+                            sender.restore(db().get("settings","sendCooldownUntil")?.toLongOrNull()?:0)
                             publish()
                             mutable.update { it.copy(loaded = true) }
                         }
+                        maintainCache()
                         if (state.value.preferences.autoSync) runCatching { sync() }.onFailure { report(it) }
                     }
                 } else if (auth.login == LoginStep.CLOSED || (auth.login != LoginStep.READY && auth.accountId == 0L)) {
@@ -125,7 +133,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
             local = db().all("local").map { row -> row.model<LocalItem>() }.associateBy { row -> row.itemId },
             rules = db().all("rules").map { row -> row.model() }, preferences = db().preferences(), lockedVaults = locked,
             unlockedVaultIds = vaults.unlockedIds, vaults = descriptors, conflicts = db().all("conflicts").map { row -> row.model() },
-            pendingOperations = db().pending().size, cacheBytes = cache?.bytes() ?: 0, offlineBytes = cache?.bytes(cache!!.offline) ?: 0, healthProblems = problems,
+            pendingOperations = db().pending().size, sendCooldownUntil=sender.until, healthProblems = problems,
             itemVaults = entities.filter { e -> e.kind == EntityKind.ITEM }.associate { e -> e.entityId to e.vaultId }, folderVaults = entities.filter { e -> e.kind == EntityKind.FOLDER }.associate { e -> e.entityId to e.vaultId },
             shares = db().entries("settings").filter { row->row.first.startsWith("share:") }.map { row->row.second.model() }) }
     }
@@ -223,10 +231,10 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
                         val text = (m.content as? TdApi.MessageText)?.text?.text
                         val doc = m.content as? TdApi.MessageDocument
                         when {
-                            text?.startsWith(CloudCodec.PREFIX) == true -> CloudCodec.decode(text)?.let { received.add(m.id to it) }
+                            (text?.startsWith(CloudCodec.PREFIX) == true || text?.startsWith(CloudCodec.BATCH) == true) -> CloudCodec.decodeMany(text!!).forEach { received.add(m.id to it) }
                             doc?.caption?.text?.startsWith(CloudCodec.DOCUMENT) == true -> {
                                 require(doc.document.document.size <= 1_500_000) { "Metadata document is too large." }
-                                CloudCodec.decode(remote.readAll(m.id).readText())?.let { received.add(m.id to it) }
+                                CloudCodec.decodeMany(remote.readAll(m.id).readText()).forEach { received.add(m.id to it) }
                             }
                             doc?.caption?.text?.startsWith(CloudCodec.BACKUP) == true -> backups.add(m.id)
                             doc?.caption?.text?.startsWith(CloudCodec.THUMB) == true -> {
@@ -270,17 +278,56 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         }
     }
     suspend fun flush() = withContext(Dispatchers.IO) {
-        if (!state.value.loaded) return@withContext
-        for (entry in db().pending()) {
-            currentCoroutineContext().ensureActive()
-            val wire = CloudCodec.encode(entry.envelope)
-            val ack = if (wire.length <= 3500) remote.sendText(wire) else {
-                val path = File(context.cacheDir, "metadata-${entry.envelope.operationId}.txt")
-                try { path.writeText(wire); remote.sendDocument(path, CloudCodec.DOCUMENT + entry.envelope.operationId) } finally { path.delete() }
+        flushing.withLock {
+            if(!state.value.loaded)return@withLock
+            while(true) {
+                // Keep transport bounded. Individual operation IDs and encrypted bodies remain intact.
+                val pending=db().pending()
+                if(pending.isEmpty())break
+                var rows=pending.take(32)
+                while(rows.size>1 && rows.sumOf{it.envelope.json().toByteArray().size}>800_000)rows=rows.take(rows.size/2)
+                val wire=if(rows.size==1)CloudCodec.encode(rows.single().envelope)else CloudCodec.encodeBatch(rows.map{it.envelope})
+                val ack=if(wire.length<=3500)remote.sendText(wire)else {
+                    val path=File(context.cacheDir,"metadata-${rows.first().envelope.operationId}.txt")
+                    try{path.writeText(wire);remote.sendDocument(path,CloudCodec.DOCUMENT+rows.first().envelope.operationId)}finally{path.delete()}
+                }
+                mutate{database->rows.forEach{database.apply(it.copy(messageId=ack.id,pending=false))}}
             }
-            mutate { it.apply(entry.copy(messageId = ack.id, pending = false)) }
-            delay(150)
+            finalizeSyncedUploads()
         }
+    }
+    /** Relocate surviving operations before deleting a shared cloud batch. */
+    suspend fun deleteCloudMetadata(entityIds:Set<String>) = withContext(Dispatchers.IO) {
+        flushing.withLock {
+            val all=db().all("journal").map{it.model<JournalEntry>()}
+            val targets=all.filter{it.envelope.entityId in entityIds}.map{it.messageId}.filter{it!=0L}.toSet()
+            for(messageId in targets) {
+                val survivors=all.filter{it.messageId==messageId&&it.envelope.entityId !in entityIds}
+                if(survivors.isNotEmpty()) {
+                    val wire=if(survivors.size==1)CloudCodec.encode(survivors.single().envelope)else CloudCodec.encodeBatch(survivors.map{it.envelope})
+                    val ack=if(wire.length<=3500)remote.sendText(wire)else {
+                        val file=File(context.cacheDir,"relocate-${newId()}.txt")
+                        try{file.writeText(wire);remote.sendDocument(file,CloudCodec.DOCUMENT+"relocated")}finally{file.delete()}
+                    }
+                    mutate{database->survivors.forEach{database.put("journal",it.envelope.operationId,it.copy(messageId=ack.id).json())}}
+                }
+            }
+            remote.delete(targets.toList())
+        }
+    }
+    suspend fun finalizeSyncedUploads() {
+        val candidates=state.value.tasks.filter{it.state==TaskState.SYNCING_METADATA}
+        if(candidates.isEmpty())return
+        mutate{database->
+            val pendingIds=database.pending().map{it.envelope.entityId}.toSet()
+            candidates.filter{it.itemId !in pendingIds && it.versionId !in pendingIds}.forEach{
+                database.putTask(it.copy(state=TaskState.COMPLETED,done=it.total,error="",speedBytesPerSecond=0))
+            }
+        }
+    }
+    suspend fun maintainCache() {
+        if(now()-maintainedAt<30_000 && context.cacheDir.usableSpace>64L*1024*1024)return
+        maintainedAt=now();updateStorage()
     }
     suspend fun createVault(label: String, password: CharArray): String = withContext(Dispatchers.IO) {
         val (descriptor, recovery) = vaults.create(label, password)

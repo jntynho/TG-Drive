@@ -51,8 +51,8 @@ class LibraryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 }
 
 object BackgroundWork {
-    fun enqueue(context: Context, profile: String) {
-        val request = OneTimeWorkRequestBuilder<LibraryWorker>().setInitialDelay(60,TimeUnit.SECONDS).setInputData(workDataOf("profile" to profile))
+    fun enqueue(context: Context, profile: String, delayMillis:Long=1000) {
+        val request = OneTimeWorkRequestBuilder<LibraryWorker>().setInitialDelay(delayMillis.coerceAtLeast(1000),TimeUnit.MILLISECONDS).setInputData(workDataOf("profile" to profile))
             // Evaluate the current preferences in the engine; queued work must not retain obsolete rules.
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build()

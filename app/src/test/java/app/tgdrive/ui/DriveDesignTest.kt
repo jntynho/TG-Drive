@@ -99,19 +99,31 @@ class DriveDesignTest {
         }
     }
 
-    @Test fun galleryTileOpensPreviewAndItsMenuOnlyOpensActions() {
+    @Test fun galleryTileIsOneAccessibleTargetWithoutFilenameOrOverflow() {
         val photo=app.tgdrive.library.Item(id="photo",name="Holiday.jpg",mime="image/jpeg",versionId="v1")
         val video=photo.copy(id="video",name="Walk.mp4",mime="video/mp4",versionId="v2")
-        var preview="";var menu=""
+        var preview=""
         render { Column {
-            SectionTitle("Gallery","Your photos and videos")
-            MediaContent(listOf(photo,video),true,onPreview={preview=it},onMenu={menu=it})
+            DriveAppHeader("Gallery",null,{},"",0,0)
+            MediaContent(listOf(photo,video),true,onPreview={preview=it},onMenu={error("No gallery tile menu")})
         } }
-        compose.onNodeWithText("Holiday.jpg").performClick()
+        val bounds=compose.onNodeWithContentDescription("Holiday.jpg").fetchSemanticsNode().boundsInRoot
+        assertEquals(.8f,bounds.width/bounds.height,.01f)
+        compose.onNodeWithContentDescription("Holiday.jpg").performClick()
         assertEquals("photo",preview)
-        compose.onNodeWithContentDescription("Actions for Walk.mp4").performClick()
-        assertEquals("video",menu);assertEquals("photo",preview)
+        compose.onNodeWithText("Holiday.jpg").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Actions for Walk.mp4").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Walk.mp4").performClick()
+        assertEquals("video",preview)
         screenshot("gallery")
+    }
+    @Test fun adaptiveHeaderExposesCurrentPageAndAccountAccess() {
+        var opened=false
+        render { DriveAppHeader("Audio",null,{opened=true},"A",1,0) }
+        compose.onNodeWithText("Audio").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Manage accounts").performClick()
+        assertTrue(opened)
+        compose.onNodeWithText("TG Drive").assertDoesNotExist()
     }
 
     @Test fun homeKeepsLibraryActivityAndBackupsReachable() {

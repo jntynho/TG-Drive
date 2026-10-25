@@ -59,6 +59,57 @@ class TransferIntegrationTest {
         assertTrue(repo.db().preferences().chargingOnly)
         assertTrue(cacheFile.exists())
     }
+    @Test fun `batch uploads share one metadata send and preserve completion callbacks`()=runBlocking {
+        open();var completed=0;engine.completed={completed++}
+        engine.enqueueUpload((1..5).map{source("content-$it".toByteArray(),"file-$it.bin")});engine.drain(20_000)
+        assertEquals(5,repo.state.value.tasks.count{it.state==TaskState.COMPLETED})
+        assertEquals(5,completed)
+        assertTrue(repo.state.value.tasks.drop(1).any{it.payload.model<UploadSpec>().preparedSource})
+        val messages=wire.messages.values.mapNotNull{(it.content as? TdApi.MessageText)?.text?.text}
+        assertEquals(1,messages.count{it.startsWith(CloudCodec.BATCH)})
+        assertEquals(10,CloudCodec.decodeMany(messages.single{it.startsWith(CloudCodec.BATCH)}).size)
+        engine.drain(20_000);assertEquals(5,completed)
+    }
+    @Test fun `purging one file relocates siblings before deleting a shared metadata batch`()=runBlocking {
+        open()
+        engine.enqueueUpload(listOf(source("one".toByteArray(),"one.bin"),source("two".toByteArray(),"two.bin")));engine.drain(20_000)
+        val first=repo.state.value.items.first()
+        val survivor=repo.state.value.items.first{it.id!=first.id}
+        val actions=LibraryActions(repo,engine);actions.trash(listOf(first.id));actions.purge(listOf(first.id))
+        val cloud=wire.messages.values.flatMap{m->val text=(m.content as? TdApi.MessageText)?.text?.text; if(text==null)emptyList()else CloudCodec.decodeMany(text)}
+        assertTrue(cloud.any{it.entityId==survivor.id})
+        assertTrue(cloud.filter{it.entityId==first.id}.all{it.tombstone})
+    }
+    @Test fun `metadata failure retains content and retries without uploading it again`()=runBlocking {
+        open();wire.failMetadata=true
+        engine.enqueueUpload(listOf(source("retained content".toByteArray())))
+        assertTrue(runCatching{engine.drain(20_000)}.isFailure)
+        assertEquals(TaskState.SYNCING_METADATA,repo.state.value.tasks.single().state)
+        assertEquals(1,wire.uploadedIndices.size)
+        wire.failMetadata=false;engine.drain(20_000)
+        assertEquals(TaskState.COMPLETED,repo.state.value.tasks.single().state)
+        assertEquals(1,wire.uploadedIndices.size)
+    }
+    @Test fun `server flood wait applies to the account and manual retry cannot bypass it`()=runBlocking {
+        open();wire.sendWait=160
+        engine.enqueueUpload(listOf(source("first".toByteArray()),source("second".toByteArray())))
+        engine.drain(20_000)
+        assertEquals(1,wire.sendCalls)
+        assertTrue(repo.state.value.sendCooldownUntil>now()+150_000)
+        assertEquals(repo.state.value.sendCooldownUntil,repo.db().get("settings","sendCooldownUntil")!!.toLong())
+        engine.retry(repo.state.value.tasks.first().id);engine.drain(20_000)
+        assertEquals(1,wire.sendCalls)
+        assertTrue(repo.state.value.tasks.none{it.state==TaskState.COMPLETED})
+    }
+    @Test fun `acknowledging batched ancestors does not invent edit conflicts`()=runBlocking {
+        open()
+        val id=repo.createFolder("First")
+        repo.updateFolder(repo.state.value.folders.single{it.id==id}.copy(name="Renamed"))
+        repo.flush()
+        assertEquals("Renamed",repo.state.value.folders.single{it.id==id}.name)
+        assertTrue(repo.state.value.conflicts.isEmpty())
+        assertTrue(repo.db().pending().isEmpty())
+    }
     @Test fun `multipart upload commits once and restored bytes match original`()=runBlocking {
         open();val bytes=ByteArray(2_200_123){(it%251).toByte()}
         engine.enqueueUpload(listOf(source(bytes)));engine.drain(20_000)
@@ -260,6 +311,7 @@ class TransferIntegrationTest {
     }
     private class Wire(val directory:File):TdConnectionFactory {
         @Volatile var update:((TdApi.Object)->Unit)?=null
+        var failMetadata=false;var sendWait=0;var sendCalls=0
         var userId=1701L;var next=100L;var failPart:Int?=null;var stall=false;var stallDownload=false
         @Volatile var downloading=false
         val cancelledDownloads=mutableListOf<Int>()
@@ -268,6 +320,8 @@ class TransferIntegrationTest {
         override fun create(onUpdate:(TdApi.Object)->Unit,onError:()->Unit):TdConnection {
             update=onUpdate
             return object:TdConnection {override fun send(function:TdApi.Function<*>,result:(TdApi.Object)->Unit) {
+                if(function is TdApi.SendMessage){sendCalls++;if(sendWait>0){result(TdApi.Error(429,"Too Many Requests: retry after $sendWait"));return}}
+                if(failMetadata && function is TdApi.SendMessage && function.inputMessageContent is TdApi.InputMessageText){result(TdApi.Error(500,"metadata temporary failure"));return}
                 if(function is TdApi.DownloadFile&&stallDownload){downloading=true;return}
                 if(stall&&function is TdApi.SendMessage&&function.inputMessageContent is TdApi.InputMessageDocument)return
                 val answer:TdApi.Object=when(function){

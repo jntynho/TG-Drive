@@ -39,7 +39,7 @@ fun now() = System.currentTimeMillis()
     val sourceUri: String = "", val sourceHash: String = "", val ocrText: String = "", val missing: Boolean = false,
 )
 @Serializable enum class TaskKind { UPLOAD, DOWNLOAD, PIN, VERIFY, EXPORT, WEBDAV, SHARE, OCR }
-@Serializable enum class TaskState { QUEUED, PREPARING, TRANSFERRING, PAUSED, WAITING_FOR_WIFI, WAITING_FOR_CHARGING, WAITING_FOR_UNLOCK, WAITING_FOR_NETWORK, WAITING_FOR_DEVICE, RETRY_WAIT, COMPLETED, FAILED, CANCELLED }
+@Serializable enum class TaskState { QUEUED, PREPARING, TRANSFERRING, PAUSED, WAITING_FOR_WIFI, WAITING_FOR_CHARGING, WAITING_FOR_UNLOCK, WAITING_FOR_NETWORK, WAITING_FOR_DEVICE, SYNCING_METADATA, RETRY_WAIT, COMPLETED, FAILED, CANCELLED }
 @Serializable data class TransferTask(
     val id: String = newId(), val kind: TaskKind, val title: String, val state: TaskState = TaskState.QUEUED,
     val accountId: Long = 0, val profileId: String = "legacy",
@@ -49,9 +49,9 @@ fun now() = System.currentTimeMillis()
     val error: String = "", val payload: String = "{}", val pendingMessageId: Long = 0,
     val pendingPartPath: String = "", val sourceSha256: String = "", val parts: List<Part> = emptyList(),
     val ruleId: String = "", val allowDuplicate: Boolean = false,
-    val speedBytesPerSecond: Long = 0, val priority: Int = 0,
+    val speedBytesPerSecond: Long = 0, val priority: Int = 0, val completionNotified:Boolean=false,
 )
-@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0)
+@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0, val preparedSource:Boolean=false, val preparedHash:String="", val preparedSize:Long=0)
 @Serializable data class SourceReceipt(val uri: String, val size: Long, val modifiedAt: Long, val hash: String, val itemId: String, val uploadedAt: Long = now())
 @Serializable data class BackupRule(
     val id: String = newId(), val name: String, val treeUri: String, val folderId: String = "", val vaultId: String = "",
@@ -86,6 +86,7 @@ data class LibraryState(
     val incoming: List<ImportCandidate> = emptyList(), val organization: List<OrganizationChange> = emptyList(),
     val lastShare: ShareResult? = null,
     val healthProblems: List<String> = emptyList(),
+    val sendCooldownUntil: Long = 0,
     val itemVaults: Map<String, String> = emptyMap(), val folderVaults: Map<String, String> = emptyMap(),
     val shares: List<ShareResult> = emptyList(),
 )

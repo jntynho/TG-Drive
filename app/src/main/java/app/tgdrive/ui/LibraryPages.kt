@@ -3,12 +3,13 @@ package app.tgdrive.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,20 +35,18 @@ internal fun libraryCollection(state: LibraryState, kind: String = "all", query:
 }
 
 @Composable
-fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit) {
-    var page by rememberSaveable { mutableStateOf("home") }
+fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit) {
     var actionId by remember { mutableStateOf("") }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    BackHandler(page != "home") { page = "home" }
+    BackHandler(page != "home") { onPage("home") }
     AnimatedContent(page, transitionSpec = { horizontalNavigation(targetState != "home") }, label = "home-detail") { route ->
         saved.SaveableStateProvider(route) {
             if (route == "home") {
-                HomeContent(state, bundle, onOpen = { page = it }, onPreview = onPreview, onMenu = { actionId = it },
+                HomeContent(state, bundle, onOpen = onPage, onPreview = onPreview, onMenu = { actionId = it },
                     onUpload = { system.upload("", "", "") })
             } else Column(Modifier.fillMaxSize()) {
-                DrivePageHeader(when(route) { "files" -> "All files"; "activity" -> "Activity"; else -> "Backups" }, { page = "home" }, backDescription = "Back to Home")
                 when(route) {
-                    "files" -> FilesPage(state, bundle, system, onPreview)
+                    "files" -> FilesPage(state, bundle, system, onPreview, onFolderTitle,onFolderBack)
                     "activity" -> TransfersPage(state, bundle, system)
                     "backups" -> BackupsPage(state, bundle, system)
                 }
@@ -67,9 +66,9 @@ internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onO
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Your files", "Everything you keep, in one place") }
-        item { DriveButton(onUpload, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Add,null); Spacer(Modifier.width(8.dp)); Text("Add files") } }
+        item { DriveButton(onUpload, Modifier.fillMaxWidth()) { Icon(DriveIcons.Add,null); Spacer(Modifier.width(8.dp)); Text("Add files") } }
         item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf(Triple("Browse all files","files",Icons.Outlined.Folder),Triple("Activity","activity",Icons.Outlined.SwapVert),Triple("Backups","backups",Icons.Outlined.Backup)).forEach { (title,route,icon) ->
+            listOf(Triple("Browse all files","files",DriveIcons.Folder),Triple("Activity","activity",DriveIcons.SwapVert),Triple("Backups","backups",DriveIcons.Backup)).forEach { (title,route,icon) ->
                 DriveCard(onClick={onOpen(route)},modifier=Modifier.weight(1f)) {
                     Column(Modifier.fillMaxWidth().heightIn(min=88.dp).padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         Icon(icon,null)
@@ -80,14 +79,14 @@ internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onO
         } }
         item { Text("Suggested for you",style=MaterialTheme.typography.titleMedium) }
         item {
-            if(state.rules.none { it.enabled }) ActionRow("Keep a folder backed up", "Choose a folder and review its backup rules", Icons.Outlined.Backup) { onOpen("backups") }
-            else ActionRow("Review your transfers", "Check progress and resume paused work", Icons.Outlined.SwapVert) { onOpen("activity") }
+            if(state.rules.none { it.enabled }) ActionRow("Keep a folder backed up", "Choose a folder and review its backup rules", DriveIcons.Backup) { onOpen("backups") }
+            else ActionRow("Review your transfers", "Check progress and resume paused work", DriveIcons.SwapVert) { onOpen("activity") }
         }
         item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
             Text("Recently uploaded",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
             TextButton({onOpen("files")}) { Text("See all") }
         } }
-        if(recent.isEmpty()) item { InfoCard("Your space is ready", "Add your first files. Your latest uploads will appear here.", Icons.Outlined.CloudUpload) }
+        if(recent.isEmpty()) item { InfoCard("Your space is ready", "Add your first files. Your latest uploads will appear here.", DriveIcons.CloudUpload) }
         items(recent,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,
             onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
         item { Spacer(Modifier.height(16.dp)) }
@@ -103,11 +102,11 @@ fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions,
     }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-            SectionTitle(if(gallery) "Gallery" else "Audio",if(gallery) "Your photos and videos" else "Your songs and recordings")
-            DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,placeholder={Text(if(gallery) "Search photos and videos" else "Search audio")},leadingIcon={Icon(Icons.Outlined.Search,null)})
+            DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,placeholder={Text(if(gallery) "Search photos and videos" else "Search audio")},leadingIcon={Icon(DriveIcons.Search,null)})
             Text("${media.size} files",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        MediaContent(media,gallery,bundle,onPreview,{actionId=it})
+        val visibleIds = state.items.filter { it.deletedAt==0L && (state.itemVaults[it.id].orEmpty().isEmpty() || state.itemVaults[it.id] in state.unlockedVaultIds) }.map{it.id}.toSet()
+        MediaContent(media.filter{it.id in visibleIds},gallery,bundle,onPreview,{actionId=it})
     }
     state.items.firstOrNull { it.id == actionId }?.let { item ->
         FileActionsSheet(item,state,bundle,system,onDismiss={actionId=""},onPreview={actionId="";onPreview(item.id)})
@@ -117,17 +116,15 @@ fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions,
 @Composable
 internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit) {
     if(items.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp),contentAlignment=Alignment.Center) {
-        InfoCard(if(gallery) "No photos or videos" else "No audio files", "Upload files from Home, or try another search.", if(gallery) Icons.Outlined.PhotoLibrary else Icons.Outlined.AudioFile)
-    } else if(gallery) LazyVerticalGrid(GridCells.Adaptive(112.dp),Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=24.dp),
-        horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        InfoCard(if(gallery) "No photos or videos" else "No audio files", "Upload files from Home, or try another search.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
+    } else if(gallery) LazyVerticalGrid(GridCells.Adaptive(100.dp),Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp),
+        horizontalArrangement=Arrangement.spacedBy(2.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
         items(items,key={it.id}) { item ->
-            DriveCard(onClick={onPreview(item.id)}) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    FileThumbnail(item,bundle,Modifier.fillMaxSize())
-                    if(item.mime.startsWith("video/")) Icon(Icons.Outlined.PlayCircle,"Video",Modifier.align(Alignment.BottomStart).padding(8.dp).size(24.dp).background(Color.Black.copy(alpha=.55f),DriveStyle.PillShape),tint=Color.White)
-                    IconButton({onMenu(item.id)},Modifier.align(Alignment.TopEnd).padding(4.dp).size(48.dp).background(Color.Black.copy(alpha=.55f),DriveStyle.PillShape)) { Icon(Icons.Outlined.MoreHoriz,"Actions for ${item.name}",tint=Color.White) }
-                }
-                Text(item.name,Modifier.padding(10.dp),maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.labelMedium)
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().aspectRatio(4f/5f).background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .clickable(role=androidx.compose.ui.semantics.Role.Button,onClickLabel="Open ${item.name}"){onPreview(item.id)}
+                .semantics { contentDescription = item.name }) {
+                FileThumbnail(item,bundle,Modifier.fillMaxSize(),square=true)
+                if(item.mime.startsWith("video/")) Icon(DriveIcons.PlayCircle,"Video",Modifier.align(Alignment.BottomStart).padding(8.dp).size(20.dp).background(Color.Black.copy(alpha=.45f),DriveStyle.PillShape),tint=Color.White)
             }
         }
     } else LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {

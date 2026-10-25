@@ -10,9 +10,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -118,7 +115,7 @@ fun DriveCircleButton(icon: ImageVector, description: String, onClick: () -> Uni
 @Composable
 fun DrivePageHeader(title: String, onBack: () -> Unit, close: Boolean = false, backDescription: String = "Back to settings") {
     Box(Modifier.fillMaxWidth().heightIn(min = 80.dp).padding(horizontal = DriveStyle.PageInset, vertical = 12.dp)) {
-        DriveCircleButton(if (close) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack,
+        DriveCircleButton(if (close) DriveIcons.Close else DriveIcons.ArrowBack,
             if (close) "Close settings" else backDescription, onBack, Modifier.align(Alignment.CenterStart))
         Text(title, Modifier.align(Alignment.Center).padding(horizontal = 60.dp),
             style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -142,5 +139,14 @@ fun DriveSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifie
         Box(Modifier.size(64.dp,28.dp).background(track,DriveStyle.PillShape)) {
             Box(Modifier.offset(x=offset,y=2.dp).size(40.dp,24.dp).background(thumb,DriveStyle.PillShape))
         }
+    }
+}
+
+@Composable
+fun DriveCheckboxRow(label:String,checked:Boolean,onChange:(Boolean)->Unit,enabled:Boolean=true) {
+    Row(Modifier.fillMaxWidth().heightIn(min=48.dp).toggleable(checked,enabled=enabled,role=Role.Checkbox,onValueChange=onChange),
+        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        Checkbox(checked,onCheckedChange=null,enabled=enabled)
+        Text(label,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium)
     }
 }

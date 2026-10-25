@@ -6,10 +6,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -32,7 +28,7 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class,ExperimentalFoundationApi::class)
 @Composable
-fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,onPreview:(String)->Unit) {
+fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,onPreview:(String)->Unit,onTitle:(String)->Unit={},onFolderBack:((()->Unit)?)->Unit={}) {
     var folder by rememberSaveable { mutableStateOf("") };var vault by rememberSaveable { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") };var collection by rememberSaveable { mutableStateOf("All") }
     var type by rememberSaveable { mutableStateOf("all") };var minimum by rememberSaveable { mutableLongStateOf(0) }
@@ -43,6 +39,8 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     var newFolder by remember { mutableStateOf(false) };var moveSelection by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) };var confirmPurge by remember { mutableStateOf(false) }
     val current = state.folders.firstOrNull{it.id==folder}
+    LaunchedEffect(folder,current?.name){onTitle(if(folder.isEmpty())"All files" else current?.name?:"Folder")}
+    LaunchedEffect(folder,current?.parentId){onFolderBack(if(folder.isEmpty())null else ({folder=current?.parentId?:""}))}
     BackHandler(enabled=folder.isNotEmpty()||selected.isNotEmpty()){if(selected.isNotEmpty())selected=emptySet() else folder=current?.parentId?:""}
     LaunchedEffect(state.items) { selected=selected.filter{ id->state.items.any{it.id==id} }.toSet() }
     val visible by produceState(emptyList<Item>(),state.items,state.local,folder,vault,query,collection,type,minimum,days,order){
@@ -60,29 +58,29 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     val folders=remember(state.folders,folder,vault,query,collection){state.folders.filter{it.parentId==folder&&it.deletedAt==0L&&state.folderVaults[it.id].orEmpty()==vault&&collection=="All"&&query.isBlank()}.sortedBy{it.name.lowercase()}}
     Box(Modifier.fillMaxSize()){
         LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=160.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
-            item {SectionTitle(if(folder.isEmpty())"Your files" else current?.name?:"Folder",if(folder.isEmpty())"Everything you keep, in one place." else folderPath(folder,state.folders))}
+            if(folder.isNotEmpty()) item {Text(folderPath(folder,state.folders),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
             item {Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
                 MiniStat(state.items.count{it.deletedAt==0L&&it.versionId.isNotEmpty()}.toString(),"Files",Modifier.weight(1f))
                 MiniStat(formatBytes(state.items.filter{it.deletedAt==0L}.sumOf{it.size}),"Indexed content",Modifier.weight(1f))
             }}
-            if(state.pendingOperations>0)item {InfoCard("Metadata waiting to sync","${state.pendingOperations} changes are saved on this phone. Your original files remain in Telegram.",Icons.Outlined.CloudSync)}
-            item {DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=DriveStyle.CardShape,placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(Icons.Outlined.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(Icons.Outlined.Tune,"Search filters")}})}
+            if(state.pendingOperations>0)item {InfoCard("Metadata waiting to sync","${state.pendingOperations} changes are saved on this phone. Your original files remain in Telegram.",DriveIcons.CloudSync)}
+            item {DriveTextField(query,{query=it},Modifier.fillMaxWidth(),singleLine=true,shape=DriveStyle.CardShape,placeholder={Text("Search files, tags and extracted text")},leadingIcon={Icon(DriveIcons.Search,null)},trailingIcon={IconButton(onClick={filterSheet=true}){Icon(DriveIcons.Tune,"Search filters")}})}
             item {LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 items(listOf("All","Favorites","Offline","Trash")){label->DriveFilterChip(collection==label,{collection=label;selected=emptySet()},label={Text(label)})}
-                item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.updatePreferences{it.copy(showGrid=value)}}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)Icons.Outlined.ViewList else Icons.Outlined.GridView,null,Modifier.size(18.dp))})}
+                item{DriveAssistChip(onClick={val value=!state.preferences.showGrid;bundle.actions.run{bundle.library.updatePreferences{it.copy(showGrid=value)}}},label={Text(if(state.preferences.showGrid)"List" else "Grid")},leadingIcon={Icon(if(state.preferences.showGrid)DriveIcons.ViewList else DriveIcons.GridView,null,Modifier.size(18.dp))})}
             }}
             if(state.vaults.isNotEmpty()&&collection=="All")item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
                 item{DriveFilterChip(vault.isEmpty(),{vault="";folder=""},label={Text("Personal")})}
-                items(state.vaults,key={it.id}){v->DriveFilterChip(vault==v.id,{vault=v.id;folder=""},label={Text(v.label)},leadingIcon={Icon(if(v.id in state.unlockedVaultIds)Icons.Outlined.LockOpen else Icons.Outlined.Lock,null,Modifier.size(16.dp))})}
+                items(state.vaults,key={it.id}){v->DriveFilterChip(vault==v.id,{vault=v.id;folder=""},label={Text(v.label)},leadingIcon={Icon(if(v.id in state.unlockedVaultIds)DriveIcons.LockOpen else DriveIcons.Lock,null,Modifier.size(16.dp))})}
             }}
-            if(vault.isNotEmpty()&&vault !in state.unlockedVaultIds)item{InfoCard("Vault is locked","Unlock it from Settings → Vaults. File names and contents stay hidden while locked.",Icons.Outlined.Lock)}
-            if(folder.isNotEmpty())item{TextButton(onClick={folder=current?.parentId?:"";selected=emptySet()}){Icon(Icons.AutoMirrored.Outlined.ArrowBack,null);Spacer(Modifier.width(6.dp));Text("Parent folder")}}
+            if(vault.isNotEmpty()&&vault !in state.unlockedVaultIds)item{InfoCard("Vault is locked","Unlock it from Settings → Vaults. File names and contents stay hidden while locked.",DriveIcons.Lock)}
+            if(folder.isNotEmpty())item{TextButton(onClick={folder=current?.parentId?:"";selected=emptySet()}){Icon(DriveIcons.ArrowBack,null);Spacer(Modifier.width(6.dp));Text("Parent folder")}}
             if(state.syncing)item{LinearProgressIndicator(Modifier.fillMaxWidth());Text("Reconciling your Telegram index…",style=MaterialTheme.typography.labelSmall)}
             items(folders,key={"folder:${it.id}"}){f->Surface(shape=DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface,modifier=Modifier.animateItem().combinedClickable(onClick={folder=f.id},onLongClick={folderAction=f})){
-                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.Folder,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(14.dp));Text(f.name,Modifier.weight(1f),fontWeight=FontWeight.Medium);IconButton(onClick={folderAction=f}){Icon(Icons.Outlined.MoreHoriz,"Folder actions")}}
+                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(DriveIcons.Folder,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(14.dp));Text(f.name,Modifier.weight(1f),fontWeight=FontWeight.Medium);IconButton(onClick={folderAction=f}){Icon(DriveIcons.MoreHoriz,"Folder actions")}}
             }}
             if(visible.isEmpty()&&folders.isEmpty()&&!state.syncing)item{Column(Modifier.fillMaxWidth().padding(vertical=38.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){
-                Icon(if(collection=="Trash")Icons.Outlined.DeleteOutline else Icons.Outlined.CloudUpload,null,Modifier.size(58.dp),tint=MaterialTheme.colorScheme.primary)
+                Icon(if(collection=="Trash")DriveIcons.DeleteOutline else DriveIcons.CloudUpload,null,Modifier.size(58.dp),tint=MaterialTheme.colorScheme.primary)
                 Text(if(query.isNotEmpty())"No matches yet" else if(collection=="Trash")"Trash is empty" else "A fresh place to start",style=MaterialTheme.typography.titleLarge)
                 Text(if(collection=="All")"Upload files or create a folder." else "Files in this collection will appear here.",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }}
@@ -94,14 +92,14 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             }else items(visible,key={it.id}){item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,false,Modifier.animateItem(),onClick={if(selected.isNotEmpty())selected=toggle(selected,item.id) else onPreview(item.id)},onLongClick={selected=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle)}
             item{Text("Stored in your own Saved Messages. Telegram account limits apply.",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         }
-        if(selected.isEmpty())ExtendedFloatingActionButton(onClick={addSheet=true},icon={Icon(Icons.Outlined.Add,null)},text={Text("Add files")},
+        if(selected.isEmpty())ExtendedFloatingActionButton(onClick={addSheet=true},icon={Icon(DriveIcons.Add,null)},text={Text("Add files")},
             containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary,
             shape=DriveStyle.PillShape,elevation=FloatingActionButtonDefaults.elevation(0.dp),
             modifier=Modifier.align(Alignment.BottomEnd).padding(20.dp))
         AnimatedVisibility(selected.isNotEmpty(),modifier=Modifier.align(Alignment.BottomCenter)){
             Surface(color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(topStart=24.dp,topEnd=24.dp)){
                 Column(Modifier.fillMaxWidth().padding(12.dp)){
-                    Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={selected=emptySet()}){Icon(Icons.Outlined.Close,"Clear selection")};Text("${selected.size} selected",Modifier.weight(1f));TextButton(onClick={selected=visible.map{it.id}.toSet()}){Text("Select all")}}
+                    Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={selected=emptySet()}){Icon(DriveIcons.Close,"Clear selection")};Text("${selected.size} selected",Modifier.weight(1f));TextButton(onClick={selected=visible.map{it.id}.toSet()}){Text("Select all")}}
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){
                         TextButton(onClick={system.exportZip(selected.toList())}){Text("Save ZIP")}
                         TextButton(onClick={moveSelection=true}){Text("Move")}
@@ -116,10 +114,10 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     }
     if(addSheet)ModalBottomSheet(onDismissRequest={addSheet=false}){Column(Modifier.fillMaxWidth().padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
         SectionTitle("Add to your space")
-        ActionRow("Upload files","Select multiple files",Icons.Outlined.Upload){addSheet=false;system.upload(folder,vault,"")}
-        ActionRow("Scan a document","Capture or choose images, then create a PDF",Icons.Outlined.DocumentScanner){addSheet=false;system.scan(folder,vault)}
-        ActionRow("New folder",icon=Icons.Outlined.CreateNewFolder){addSheet=false;newFolder=true}
-        ActionRow("Import Saved Messages","Choose existing documents without rewriting their captions",Icons.Outlined.MoveToInbox){addSheet=false;bundle.actions.run{bundle.library.sync(full=true,collectImports=true)}}
+        ActionRow("Upload files","Select multiple files",DriveIcons.Upload){addSheet=false;system.upload(folder,vault,"")}
+        ActionRow("Scan a document","Capture or choose images, then create a PDF",DriveIcons.DocumentScanner){addSheet=false;system.scan(folder,vault)}
+        ActionRow("New folder",icon=DriveIcons.CreateNewFolder){addSheet=false;newFolder=true}
+        ActionRow("Import Saved Messages","Choose existing documents without rewriting their captions",DriveIcons.MoveToInbox){addSheet=false;bundle.actions.run{bundle.library.sync(full=true,collectImports=true)}}
         Spacer(Modifier.height(12.dp))
     }}
     if(newFolder)TextInputDialog("New folder","Folder name",onDismiss={newFolder=false}){name->bundle.actions.run{bundle.library.createFolder(name,folder,vault)};newFolder=false}
@@ -143,30 +141,30 @@ fun folderPath(id:String,folders:List<Folder>):String {
 @Composable fun NativeFileCard(item:Item,local:LocalItem?,encrypted:Boolean,selected:Boolean,grid:Boolean,modifier:Modifier=Modifier,onClick:()->Unit,onLongClick:()->Unit,onMenu:()->Unit,bundle:SessionBundle?=null){
     Surface(modifier=modifier.fillMaxWidth().semantics{this.selected=selected}.combinedClickable(onClick=onClick,onLongClick=onLongClick,onLongClickLabel="Select file"),shape=DriveStyle.CardShape,color=if(selected)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface){
         if(grid)Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
-            Row(verticalAlignment=Alignment.CenterVertically){FileThumbnail(item,bundle,Modifier.size(72.dp));Spacer(Modifier.weight(1f));IconButton(onClick=onMenu){Icon(Icons.Outlined.MoreHoriz,"File actions")}}
+            Row(verticalAlignment=Alignment.CenterVertically){FileThumbnail(item,bundle,Modifier.size(72.dp));Spacer(Modifier.weight(1f));IconButton(onClick=onMenu){Icon(DriveIcons.MoreHoriz,"File actions")}}
             Text(item.name,maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall);FileIndicators(item,local,encrypted)
         }else Row(Modifier.fillMaxWidth().padding(start=15.dp,end=6.dp,top=11.dp,bottom=11.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(13.dp)){
-            if(selected)Icon(Icons.Outlined.CheckCircle,null,Modifier.size(38.dp),tint=MaterialTheme.colorScheme.primary) else FileThumbnail(item,bundle,Modifier.size(44.dp))
+            if(selected)Icon(DriveIcons.CheckCircle,null,Modifier.size(38.dp),tint=MaterialTheme.colorScheme.primary) else FileThumbnail(item,bundle,Modifier.size(44.dp))
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(item.name,maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text("${formatBytes(item.size)} · ${DateFormat.getDateInstance(DateFormat.SHORT).format(Date(item.createdAt))}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant);FileIndicators(item,local,encrypted)}
-            IconButton(onClick=onMenu){Icon(Icons.Outlined.MoreHoriz,"File actions")}
+            IconButton(onClick=onMenu){Icon(DriveIcons.MoreHoriz,"File actions")}
         }
     }
 }
 @Composable private fun FileIndicators(item:Item,local:LocalItem?,encrypted:Boolean){Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-    if(item.favorite)Icon(Icons.Outlined.Star,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
-    if(encrypted)Icon(Icons.Outlined.Lock,null,Modifier.size(14.dp))
-    if(local?.pinnedVersion==item.versionId)Icon(Icons.Outlined.OfflinePin,null,Modifier.size(14.dp))
-    if(local?.verifiedVersion==item.versionId&&item.sha256.isNotEmpty())Icon(Icons.Outlined.Verified,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
+    if(item.favorite)Icon(DriveIcons.Star,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
+    if(encrypted)Icon(DriveIcons.Lock,null,Modifier.size(14.dp))
+    if(local?.pinnedVersion==item.versionId)Icon(DriveIcons.OfflinePin,null,Modifier.size(14.dp))
+    if(local?.verifiedVersion==item.versionId&&item.sha256.isNotEmpty())Icon(DriveIcons.Verified,null,Modifier.size(14.dp),tint=MaterialTheme.colorScheme.primary)
     if(local?.missing==true)Text("Reference unavailable",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
     if(item.tags.isNotEmpty())Text(item.tags.take(2).joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
 }}
-fun fileIcon(mime:String)=when{mime.startsWith("image/")->Icons.Outlined.Image;mime.startsWith("video/")->Icons.Outlined.Videocam;mime.startsWith("audio/")->Icons.Outlined.AudioFile;mime=="application/pdf"->Icons.Outlined.PictureAsPdf;else->Icons.AutoMirrored.Outlined.InsertDriveFile}
+fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.startsWith("video/")->DriveIcons.Videocam;mime.startsWith("audio/")->DriveIcons.AudioFile;mime=="application/pdf"->DriveIcons.PictureAsPdf;else->DriveIcons.InsertDriveFile}
 
-@Composable fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier) {
+@Composable fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier,square:Boolean=false) {
     val bitmap by produceState<android.graphics.Bitmap?>(null,item.id,item.versionId,bundle) {
         if(bundle!=null)value=try{ThumbnailTools(bundle.library).read(item)}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){null}
     }
     val thumb=bitmap
-    if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
+    if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,if(square)modifier else modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
     else Box(modifier,contentAlignment=Alignment.Center) { Icon(fileIcon(item.mime),null,Modifier.size(36.dp),tint=MaterialTheme.colorScheme.primary) }
 }

@@ -5,17 +5,15 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,77 +22,144 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import app.tgdrive.PlaybackService
 import app.tgdrive.SessionBundle
-import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 import kotlinx.coroutines.*
 import java.io.File
+import kotlin.math.min
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun NativePreview(item:Item,bundle:SessionBundle,system:SystemActions,onBack:()->Unit){
     DisposableEffect(item.versionId) { val lease=bundle.library.cache!!.lease(item.versionId); onDispose{lease.close()} }
     val isMedia=item.mime.startsWith("video/")||item.mime.startsWith("audio/")
-    var file by remember(item.versionId){mutableStateOf<File?>(null)};var error by remember(item.versionId){mutableStateOf<String?>(null)}
-    var editText by remember{mutableStateOf(false)}
-    var retry by remember{mutableIntStateOf(0)}
+    val isPhoto=item.mime.startsWith("image/")
+    val visual=isPhoto||item.mime.startsWith("video/")
+    var file by remember(item.versionId){mutableStateOf<File?>(null)}
+    var error by remember(item.versionId){mutableStateOf<String?>(null)}
+    var editText by remember(item.versionId){mutableStateOf(false)}
+    var menu by remember(item.versionId){mutableStateOf(false)}
+    var chrome by remember(item.versionId){mutableStateOf(true)}
+    var retry by remember(item.versionId){mutableIntStateOf(0)}
     val state by bundle.library.state.collectAsState()
-    LaunchedEffect(item.versionId,retry){
-        if(!isMedia){
-            error=null
-            try{
-                val version=bundle.library.version(item.versionId)
-                file=bundle.library.cache!!.materialize(item,version,state.itemVaults[item.id].orEmpty())
-                if(version.sha256.isNotEmpty())bundle.library.setLocal(bundle.library.db().local(item.id).copy(verifiedVersion=version.id,verifiedAt=now(),missing=false))
-            }catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not open this file."}
-        }
+    val context=LocalContext.current
+    val activity=context as? android.app.Activity
+    DisposableEffect(activity,visual,chrome) {
+        val controller=activity?.window?.let{WindowCompat.getInsetsController(it,it.decorView)}
+        if(visual&&!chrome) {controller?.systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE;controller?.hide(WindowInsetsCompat.Type.systemBars())}
+        else controller?.show(WindowInsetsCompat.Type.systemBars())
+        onDispose {controller?.show(WindowInsetsCompat.Type.systemBars())}
     }
-    Scaffold(topBar={TopAppBar(title={Column{Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall)}},navigationIcon={DriveCircleButton(Icons.AutoMirrored.Outlined.ArrowBack,"Back to files",onBack,Modifier.padding(start=8.dp))},actions={
-        IconButton(onClick={system.save(item)}){Icon(Icons.Outlined.Download,"Save file")}
-        IconButton(onClick={system.shareExternal(item)}){Icon(Icons.Outlined.Share,"Share exported copy")}
-    },colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background))}){padding->
-        Column(Modifier.fillMaxSize().padding(padding),verticalArrangement=Arrangement.spacedBy(10.dp)){
-            when{
-                isMedia->Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                    MediaPlayerPanel()
-                    DriveButton(onClick={system.play(item)},Modifier.fillMaxWidth()){Icon(Icons.Outlined.PlayArrow,null);Text("Play / resume")}
-                    Text("Playback requests ranges as needed. Starting playback is not a full-file integrity check. Network and codec support affect availability.",style=MaterialTheme.typography.bodySmall)
+    BackHandler(!chrome) {chrome=true}
+    LaunchedEffect(item.versionId,retry){
+        error=null;file=null
+        if(isMedia) {if(item.mime.startsWith("audio/"))system.play(item)}
+        else try {
+            val version=bundle.library.version(item.versionId)
+            file=withContext(Dispatchers.IO){bundle.library.cache!!.materialize(item,version,state.itemVaults[item.id].orEmpty())}
+            if(version.sha256.isNotEmpty())withContext(Dispatchers.IO){bundle.library.setLocal(bundle.library.db().local(item.id).copy(verifiedVersion=version.id,verifiedAt=now(),missing=false))}
+        } catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not open this file."}
+    }
+    val toolbar: @Composable ()->Unit = {
+        TopAppBar(title={Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall)},
+            navigationIcon={DriveCircleButton(DriveIcons.ArrowBack,"Back",onBack,Modifier.padding(start=8.dp))},
+            actions={
+                if(visual)IconButton({chrome=false}){Icon(DriveIcons.Fullscreen,"Full screen")}
+                IconButton({menu=true}){Icon(DriveIcons.MoreHoriz,"File actions")}
+            },colors=TopAppBarDefaults.topAppBarColors(containerColor=if(visual)androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background))
+    }
+    Scaffold(containerColor=if(visual)androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background,
+        topBar={if(chrome)toolbar()}){padding->
+        Box(Modifier.fillMaxSize().padding(if(chrome)padding else PaddingValues(0.dp))) {
+            when {
+                isMedia -> key(retry){if(item.mime.startsWith("video/"))VideoPlayerPanel(item,bundle,{retry++},Modifier.fillMaxSize())else MediaPlayerPanel(item,bundle,onRetry={retry++},modifier=Modifier.fillMaxSize())}
+                error!=null -> Column(Modifier.align(Alignment.Center).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    Text(error!!,color=MaterialTheme.colorScheme.error)
+                    DriveButton({retry++}){Text("Retry opening")}
                 }
-                error!=null->Column(Modifier.padding(24.dp)){Text(error!!,color=MaterialTheme.colorScheme.error);DriveButton(onClick={retry++}){Text("Retry opening")}}
-                file==null->Column(Modifier.fillMaxWidth().padding(28.dp),horizontalAlignment=Alignment.CenterHorizontally){CircularProgressIndicator();Spacer(Modifier.height(12.dp));Text("Downloading and checking content…")}
-                item.mime.startsWith("image/")->ImagePreview(file!!,bundle,Modifier.weight(1f))
-                item.mime=="application/pdf"->PdfPreview(file!!,Modifier.weight(1f))
-                item.mime.startsWith("text/")||item.name.endsWith(".json",true)||item.name.endsWith(".csv",true)->TextPreview(file!!)
-                else->Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
-                    Icon(fileIcon(item.mime),null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.primary)
-                    Text("This format has no built-in preview. The file is available for export.")
-                    DriveButton(onClick={system.openExternal(item)}){Text("Open in another application")}
+                file==null -> Column(Modifier.align(Alignment.Center),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator();Text("Opening file…")
+                }
+                isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={chrome=!chrome})
+                else -> Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    when {
+                        item.mime=="application/pdf" -> PdfPreview(file!!,Modifier.weight(1f))
+                        item.mime.startsWith("text/")||item.name.endsWith(".json",true)||item.name.endsWith(".csv",true) -> TextPreview(file!!)
+                        else -> Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                            Icon(fileIcon(item.mime),null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.primary)
+                            Text("Open this file with a compatible application.")
+                            DriveButton({system.openExternal(item)}){Text("Open in another app")}
+                        }
+                    }
+                    state.local[item.id]?.ocrText?.takeIf{it.isNotBlank()}?.let {text->
+                        DriveCard(Modifier.fillMaxWidth().padding(16.dp).heightIn(max=220.dp)) {
+                            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                                Row(verticalAlignment=Alignment.CenterVertically){Text("Extracted text",Modifier.weight(1f));TextButton({editText=true}){Text("Edit")}}
+                                SelectionContainer{Text(text,style=MaterialTheme.typography.bodySmall)}
+                            }
+                        }
+                    }
                 }
             }
-            state.local[item.id]?.ocrText?.takeIf{it.isNotBlank()}?.let{text->ElevatedCard(Modifier.fillMaxWidth().padding(16.dp).heightIn(max=220.dp)){
-                Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())){Row(verticalAlignment=Alignment.CenterVertically){Text("Extracted text",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium);TextButton(onClick={editText=true}){Text("Edit text")}};SelectionContainer{Text(text,style=MaterialTheme.typography.bodySmall)}}
-            }}
+            if(visual&&!chrome)IconButton({chrome=true},Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp)) {
+                Icon(DriveIcons.Close,"Show controls",tint=androidx.compose.ui.graphics.Color.White)
+            }
         }
     }
+    if(menu)FileActionsSheet(item,state,bundle,system,onDismiss={menu=false},onPreview={menu=false;chrome=true})
     if(editText){
-        var text by remember{mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
-        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp),label={Text("Local searchable text")})},confirmButton={TextButton(onClick={bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save text")}},dismissButton={TextButton(onClick={editText=false}){Text("Cancel")}})
+        var text by remember(item.id){mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
+        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp))},confirmButton={TextButton({bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save")}},dismissButton={TextButton({editText=false}){Text("Cancel")}})
     }
 }
-@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier){
-    var error by remember(file){mutableStateOf(false)}
-    val bitmap by produceState<Bitmap?>(null,file){value=withContext(Dispatchers.IO){runCatching{DocumentTools(bundle.library).decode(file)}.getOrElse{error=true;null}}}
-    var scale by remember(file){mutableFloatStateOf(1f)};var offset by remember(file){mutableStateOf(Offset.Zero)}
-    val transform=rememberTransformableState{zoom,pan,_->scale=(scale*zoom).coerceIn(1f,6f);offset=if(scale==1f)Offset.Zero else offset+pan}
-    Box(modifier.fillMaxWidth().clipToBounds().transformable(transform),contentAlignment=Alignment.Center){
-        bitmap?.let{Image(it.asImageBitmap(),contentDescription="Image preview",modifier=Modifier.fillMaxSize().graphicsLayer{scaleX=scale;scaleY=scale;translationX=offset.x;translationY=offset.y})}?:if(error)Text("This image cannot be decoded. Save it to open in another app.") else CircularProgressIndicator()
+
+/** Pan is limited to the actual aspect-fitted image, not the whole viewport. */
+internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize):Offset {
+    if(viewport.width<=0||viewport.height<=0||image.width<=0||image.height<=0)return Offset.Zero
+    val fit=min(viewport.width.toFloat()/image.width,viewport.height.toFloat()/image.height)
+    val x=((image.width*fit*scale-viewport.width)/2).coerceAtLeast(0f)
+    val y=((image.height*fit*scale-viewport.height)/2).coerceAtLeast(0f)
+    return Offset(if(x==0f)0f else pan.x.coerceIn(-x,x),if(y==0f)0f else pan.y.coerceIn(-y,y))
+}
+
+@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier,onTap:()->Unit){
+    var loadError by remember(file){mutableStateOf(false)}
+    val bitmap by produceState<Bitmap?>(null,file) {
+        try {value=withContext(Dispatchers.IO){DocumentTools(bundle.library).decode(file)}}
+        catch(e:CancellationException){throw e}catch(_:Exception){loadError=true}
+    }
+    var scale by remember(file){mutableFloatStateOf(1f)}
+    var pan by remember(file){mutableStateOf(Offset.Zero)}
+    var viewport by remember{mutableStateOf(IntSize.Zero)}
+    val image=bitmap
+    val size=if(image==null)IntSize.Zero else IntSize(image.width,image.height)
+    LaunchedEffect(viewport){pan=boundImagePan(pan,scale,viewport,size)}
+    Box(modifier.clipToBounds().onSizeChanged{viewport=it}
+        .pointerInput(file,size,viewport){detectTapGestures(onTap={onTap()},onDoubleTap={point->
+            if(scale>1.05f){scale=1f;pan=Offset.Zero}else{scale=2.5f;pan=boundImagePan((Offset(viewport.width/2f,viewport.height/2f)-point)*1.5f,scale,viewport,size)}
+        })}
+        .pointerInput(file,size,viewport){detectTransformGestures {centroid,delta,zoom,_->
+            val old=scale;scale=(scale*zoom).coerceIn(1f,6f)
+            val center=Offset(viewport.width/2f,viewport.height/2f)
+            pan=boundImagePan((pan-(centroid-center))*(scale/old)+(centroid-center)+delta,scale,viewport,size)
+        }},contentAlignment=Alignment.Center) {
+        if(image!=null)Image(image.asImageBitmap(),"Image preview",Modifier.fillMaxSize().graphicsLayer{scaleX=scale;scaleY=scale;translationX=pan.x;translationY=pan.y},contentScale=androidx.compose.ui.layout.ContentScale.Fit)
+        else if(loadError)Text("This image cannot be displayed. Use File actions to save or open it in another app.",Modifier.padding(24.dp))else CircularProgressIndicator()
     }
 }
 @Composable private fun PdfPreview(file:File,modifier:Modifier){
@@ -119,13 +184,85 @@ import java.io.File
     val text by produceState("",file){value=withContext(Dispatchers.IO){file.bufferedReader().use{r->val chars=CharArray(100_000);val n=r.read(chars);if(n<0)"Empty file" else String(chars,0,n)+(if(n==chars.size)"\n\n[Preview limited to 100,000 characters]" else "")}}}
     SelectionContainer{Text(text,Modifier.fillMaxWidth().padding(20.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodyMedium)}
 }
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable private fun MediaPlayerPanel(){
-    val context=LocalContext.current;var controller by remember{mutableStateOf<MediaController?>(null)}
-    DisposableEffect(context){
+@Composable private fun MediaPlayerPanel(item:Item,bundle:SessionBundle,onRetry:()->Unit,modifier:Modifier){
+    val context=LocalContext.current
+    val expected="tgdrive://file/${bundle.profile.id}/${item.id}/${item.versionId}"
+    var controller by remember(expected){mutableStateOf<MediaController?>(null)}
+    var matching by remember(expected){mutableStateOf(false)}
+    var error by remember(expected){mutableStateOf<String?>(null)}
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(expected,matching) {if(!matching){delay(15000);if(!matching&&error==null)error="Playback did not start. Check your connection and retry."}}
+    DisposableEffect(context,expected) {
         val future=MediaController.Builder(context,SessionToken(context,ComponentName(context,PlaybackService::class.java))).buildAsync()
-        future.addListener({runCatching{controller=future.get()}},ContextCompat.getMainExecutor(context))
-        onDispose{controller?.release();MediaController.releaseFuture(future)}
+        var disposed=false
+        var attached:MediaController?=null
+        val listener=object:Player.Listener {
+            override fun onEvents(player:Player,events:Player.Events) {matching=player.currentMediaItem?.localConfiguration?.uri.toString()==expected;if(matching)error=player.playerError?.let{"This media could not be played. Check your connection or open it in another app."}}
+            override fun onPlayerError(e:PlaybackException){if(matching)error="This media could not be played. Check your connection or open it in another app."}
+        }
+        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP&&item.mime.startsWith("video/")&&matching)attached?.pause()}
+        lifecycle.addObserver(observer)
+        future.addListener({
+            if(disposed)return@addListener
+            try { attached=future.get();controller=attached;attached?.addListener(listener);matching=attached?.currentMediaItem?.localConfiguration?.uri.toString()==expected }
+            catch(_:Exception){error="Could not connect to the player."}
+        },ContextCompat.getMainExecutor(context))
+        onDispose {
+            disposed=true
+            lifecycle.removeObserver(observer)
+            attached?.removeListener(listener)
+            if(item.mime.startsWith("video/")&&attached?.currentMediaItem?.localConfiguration?.uri.toString()==expected)attached?.pause()
+            MediaController.releaseFuture(future)
+        }
     }
-    AndroidView(factory={PlayerView(it).apply{useController=true;controllerShowTimeoutMs=0}},update={it.player=controller},modifier=Modifier.fillMaxWidth().aspectRatio(16f/9f))
+    Box(modifier,contentAlignment=Alignment.Center) {
+        AndroidView(factory={PlayerView(it).apply{useController=true;controllerShowTimeoutMs=3000;setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;setKeepContentOnPlayerReset(false)}},
+            update={it.player=if(matching)controller else null},onRelease={it.player=null},modifier=Modifier.fillMaxSize())
+        if(!matching&&error==null)CircularProgressIndicator()
+        error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry playback")}}}
+    }
+}
+
+/** Gallery video owns its player, so another service track can never supply its surface. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable private fun VideoPlayerPanel(item:Item,bundle:SessionBundle,onRetry:()->Unit,modifier:Modifier) {
+    val context=LocalContext.current
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val player=remember(item.versionId){
+        androidx.media3.exoplayer.ExoPlayer.Builder(context)
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(DriveDataSource.Factory((context.applicationContext as app.tgdrive.DriveApp).sessions)))
+            .setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT,true).setHandleAudioBecomingNoisy(true).build()
+    }
+    var error by remember(item.versionId){mutableStateOf<String?>(null)}
+    var buffering by remember(item.versionId){mutableStateOf(true)}
+    var position by androidx.compose.runtime.saveable.rememberSaveable(item.versionId){mutableLongStateOf(0)}
+    val libraryState by bundle.library.state.collectAsState()
+    val account=libraryState.accountId
+    DisposableEffect(player) {
+        PlaybackService.pause(context)
+        val listener=object:Player.Listener {
+            override fun onPlaybackStateChanged(state:Int){buffering=state==Player.STATE_BUFFERING}
+            override fun onPlayerError(e:PlaybackException){buffering=false;error="This video could not be played. Check your connection or open it in another app."}
+        }
+        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP)player.pause()}
+        lifecycle.addObserver(observer);player.addListener(listener)
+        onDispose {
+            val saved=player.currentPosition
+            bundle.library.scope.launch(Dispatchers.IO){runCatching{bundle.library.checkAccount(account);bundle.library.db().put("settings","playback:${item.versionId}",saved.toString())}}
+            lifecycle.removeObserver(observer);player.removeListener(listener);player.release()
+        }
+    }
+    LaunchedEffect(player) {
+        if(position==0L)position=withContext(Dispatchers.IO){bundle.library.db().get("settings","playback:${item.versionId}")?.toLongOrNull()?:0}
+        player.setMediaItem(androidx.media3.common.MediaItem.Builder().setUri("tgdrive://file/${bundle.profile.id}/${item.id}/${item.versionId}").setMimeType(item.mime).build(),position)
+        player.prepare();player.playWhenReady=true
+        while(isActive){delay(1000);position=player.currentPosition}
+    }
+    Box(modifier,contentAlignment=Alignment.Center) {
+        AndroidView(factory={PlayerView(it).apply{useController=true;controllerShowTimeoutMs=3000;resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;setKeepContentOnPlayerReset(false)}},update={it.player=player},onRelease={it.player=null},modifier=Modifier.fillMaxSize())
+        if(buffering&&error==null)CircularProgressIndicator()
+        error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry video")}}}
+    }
 }

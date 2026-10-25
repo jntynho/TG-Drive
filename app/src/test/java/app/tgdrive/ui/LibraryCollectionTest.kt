@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LibraryCollectionTest {
+    @Test fun navigationRestoresLegacyActivityStateAndOnlyExposesFourTabs() {
+        listOf(NativeTab.FILES,NativeTab.TRANSFERS,NativeTab.BACKUPS,"removed-tab").forEach { assertEquals(NativeTab.HOME,nativeTabSaver.restore(it)) }
+        assertEquals(NativeTab.GALLERY,nativeTabSaver.restore("GALLERY"))
+        assertEquals(listOf("Home","Gallery","Audio","Settings"),navigationTabs.map{it.title})
+    }
+
     @Test fun mediaCollectionsExcludeOtherTypesTrashPendingAndLockedVaults() {
         val photo=Item(id="photo",name="trip.jpg",mime="image/jpeg",versionId="v1",folderId="nested")
         val video=photo.copy(id="video",name="trip.mp4",mime="video/mp4",versionId="v2")

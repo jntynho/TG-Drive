@@ -219,7 +219,7 @@ class MainActivity : FragmentActivity() {
     @Composable private fun BackupWizard(uri:Uri,bundle:SessionBundle){
         var name by remember(uri){mutableStateOf("Selected folder")};var fromToday by remember{mutableStateOf(false)}
         AlertDialog(onDismissRequest={pickedTree=null},title={Text("Back up this folder")},text={Column{
-            DriveTextField(name,{name=it},label={Text("Rule name")});Row{Checkbox(fromToday,{fromToday=it});Text("Only files modified from today")}
+            DriveTextField(name,{name=it},label={Text("Rule name")});DriveCheckboxRow("Only files modified from today",fromToday,{fromToday=it})
             Text("This is upload-only. Background scheduling depends on Android, network rules and destination vault availability.",style=MaterialTheme.typography.bodySmall)
         }},confirmButton={TextButton(onClick={val dest=target.copy();val chosen=uri;app.sessions.bundle(dest.profile).actions.run{
             val b=app.sessions.bundle(dest.profile);b.backups.add(chosen,name,dest.folder,dest.vault,if(fromToday)now()else 0);BackgroundWork.schedule(this@MainActivity,dest.profile,b.library.state.value.preferences.scanIntervalHours);startQueue(dest.profile,scan=true)
@@ -235,7 +235,7 @@ class MainActivity : FragmentActivity() {
             },enabled=!busy){Text("Camera")};TextButton(onClick={scanPicker.launch(arrayOf("image/*"))},enabled=!busy){Text("Choose images")}}
             Text("Trim edges: ${(trim*100).toInt()}%");Slider(trim,{trim=it},valueRange=0f..0.2f,enabled=!busy)
             TextButton(onClick={rotation=(rotation+90)%360},enabled=!busy){Text("Rotate pages: $rotation°")}
-            Row{Checkbox(grayscale,{grayscale=it},enabled=!busy);Text("Grayscale")}
+            DriveCheckboxRow("Grayscale",grayscale,{grayscale=it},enabled=!busy)
             Text("Manual edge trim; automatic document-edge detection is not implied.",style=MaterialTheme.typography.bodySmall)
             if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{
@@ -249,7 +249,7 @@ class MainActivity : FragmentActivity() {
         var selected by remember{mutableStateOf(setOf<String>())};var busy by remember{mutableStateOf(false)};val ui=rememberCoroutineScope()
         AlertDialog(onDismissRequest={if(!busy)cleanupItems=null},title={Text("Choose local originals")},text={Column{
             Text("Selected originals will be hashed again and their cloud references checked before deletion.")
-            LazyColumn(Modifier.heightIn(max=300.dp)){items(rows,key={it.id}){item->Row{Checkbox(item.id in selected,{selected=if(item.id in selected)selected-item.id else selected+item.id},enabled=!busy);Text(item.name)}}}
+            LazyColumn(Modifier.heightIn(max=300.dp)){items(rows,key={it.id}){item->DriveCheckboxRow(item.name,item.id in selected,{value->selected=if(value)selected+item.id else selected-item.id},enabled=!busy)}}
             if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{
             val uris=bundle.actions.validateLocalDeletion(selected.toList())

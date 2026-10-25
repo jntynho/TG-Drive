@@ -9,11 +9,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.automirrored.outlined.Sort
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,20 +56,20 @@ fun DriveScreen(
         topBar = {
             TopAppBar(title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.CloudQueue, null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(DriveIcons.CloudQueue, null, tint = MaterialTheme.colorScheme.primary)
                     Text("TG Drive", fontWeight = FontWeight.Bold)
                 }
             }, actions = {
-                IconButton(onClick = { privacy = true }) { Icon(Icons.Outlined.Shield, stringResource(R.string.privacy)) }
+                IconButton(onClick = { privacy = true }) { Icon(DriveIcons.Shield, stringResource(R.string.privacy)) }
                 if (ready) {
-                    IconButton(onClick = refresh, enabled = !state.syncing && !state.busy) { Icon(Icons.Outlined.Refresh, stringResource(R.string.refresh)) }
-                    IconButton(onClick = { signOut = true }, enabled = !transferring && !state.busy) { Icon(Icons.AutoMirrored.Outlined.Logout, stringResource(R.string.sign_out)) }
+                    IconButton(onClick = refresh, enabled = !state.syncing && !state.busy) { Icon(DriveIcons.Refresh, stringResource(R.string.refresh)) }
+                    IconButton(onClick = { signOut = true }, enabled = !transferring && !state.busy) { Icon(DriveIcons.Logout, stringResource(R.string.sign_out)) }
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
         },
         floatingActionButton = {
             if (ready) ExtendedFloatingActionButton(onClick = { if (!transferring && !state.busy) upload() }, expanded = true,
-                icon = { Icon(Icons.Outlined.Add, null) }, text = { Text(stringResource(R.string.upload)) },
+                icon = { Icon(DriveIcons.Add, null) }, text = { Text(stringResource(R.string.upload)) },
                 containerColor = if (transferring) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer)
         },
     ) { padding ->
@@ -90,20 +85,20 @@ fun DriveScreen(
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatCard(Icons.Outlined.Description, state.files.size.toString(), stringResource(R.string.files), Modifier.weight(1f))
-                        StatCard(Icons.Outlined.CloudDone, formatBytes(state.files.sumOf { it.size }), stringResource(R.string.stored), Modifier.weight(1f))
+                        StatCard(DriveIcons.Description, state.files.size.toString(), stringResource(R.string.files), Modifier.weight(1f))
+                        StatCard(DriveIcons.CloudDone, formatBytes(state.files.sumOf { it.size }), stringResource(R.string.stored), Modifier.weight(1f))
                     }
                 }
                 item {
                     DriveTextField(value = query, onValueChange = { query = it }, singleLine = true,
-                        placeholder = { Text(stringResource(R.string.search)) }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                        placeholder = { Text(stringResource(R.string.search)) }, leadingIcon = { Icon(DriveIcons.Search, null) },
                         shape = DriveStyle.CardShape, modifier = Modifier.fillMaxWidth())
                 }
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        item { DriveFilterChip(selected = folder.isEmpty(), onClick = { onFolder(""); query = "" }, label = { Text(stringResource(R.string.home)) }, leadingIcon = { Icon(Icons.Outlined.Home, null, Modifier.size(18.dp)) }) }
-                        items(folders, key = { it }) { name -> DriveFilterChip(selected = folder == name, onClick = { onFolder(name); query = "" }, label = { Text(name) }, leadingIcon = { Icon(Icons.Outlined.Folder, null, Modifier.size(18.dp)) }) }
-                        item { DriveAssistChip(onClick = { newFolder = true }, label = { Text(stringResource(R.string.new_folder)) }, leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null, Modifier.size(18.dp)) }) }
+                        item { DriveFilterChip(selected = folder.isEmpty(), onClick = { onFolder(""); query = "" }, label = { Text(stringResource(R.string.home)) }, leadingIcon = { Icon(DriveIcons.Home, null, Modifier.size(18.dp)) }) }
+                        items(folders, key = { it }) { name -> DriveFilterChip(selected = folder == name, onClick = { onFolder(name); query = "" }, label = { Text(name) }, leadingIcon = { Icon(DriveIcons.Folder, null, Modifier.size(18.dp)) }) }
+                        item { DriveAssistChip(onClick = { newFolder = true }, label = { Text(stringResource(R.string.new_folder)) }, leadingIcon = { Icon(DriveIcons.CreateNewFolder, null, Modifier.size(18.dp)) }) }
                     }
                 }
                 if (state.syncing) item {
@@ -125,7 +120,7 @@ fun DriveScreen(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(if (query.isNotBlank()) stringResource(R.string.results) else folder.ifEmpty { stringResource(R.string.home) }, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         Box {
-                            IconButton(onClick = { sorting = true }) { Icon(Icons.AutoMirrored.Outlined.Sort, stringResource(R.string.sort)) }
+                            IconButton(onClick = { sorting = true }) { Icon(DriveIcons.Sort, stringResource(R.string.sort)) }
                             DropdownMenu(expanded = sorting, onDismissRequest = { sorting = false }) {
                                 SortOrder.entries.forEach { value -> DropdownMenuItem(text = { Text(stringResource(when(value) { SortOrder.NEWEST -> R.string.newest; SortOrder.NAME -> R.string.by_name; SortOrder.SIZE -> R.string.by_size })) }, onClick = { order = value; sorting = false }) }
                             }
@@ -134,7 +129,7 @@ fun DriveScreen(
                 }
                 if (files.isEmpty()) item {
                     Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(if (query.isBlank()) Icons.Outlined.CloudUpload else Icons.Outlined.SearchOff, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(if (query.isBlank()) DriveIcons.CloudUpload else DriveIcons.SearchOff, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
                         Text(stringResource(if (query.isBlank()) R.string.empty_title else R.string.no_results), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(if (query.isBlank()) R.string.empty_body else R.string.try_search), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -172,7 +167,7 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
     val uri = LocalUriHandler.current
     Column(modifier.fillMaxSize().background(DriveStyle.SignInCanvas).imePadding().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(20.dp)) {
-            Icon(Icons.Outlined.CloudQueue, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(DriveIcons.CloudQueue, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
             Text("Welcome to TG Drive", style=MaterialTheme.typography.headlineLarge, textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
         androidx.compose.animation.AnimatedContent(state.login, transitionSpec={horizontalNavigation(targetState != LoginStep.CONFIGURE)},label="sign-in-step") { step ->
@@ -248,10 +243,10 @@ private fun FileCard(file: DriveFile, enabled: Boolean, download: () -> Unit, de
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = DriveStyle.CardShape) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val icon = when {
-                file.mimeType.startsWith("image/") -> Icons.Outlined.Image
-                file.mimeType.startsWith("video/") -> Icons.Outlined.Videocam
-                file.mimeType.startsWith("audio/") -> Icons.Outlined.AudioFile
-                else -> Icons.AutoMirrored.Outlined.InsertDriveFile
+                file.mimeType.startsWith("image/") -> DriveIcons.Image
+                file.mimeType.startsWith("video/") -> DriveIcons.Videocam
+                file.mimeType.startsWith("audio/") -> DriveIcons.AudioFile
+                else -> DriveIcons.InsertDriveFile
             }
             Box(Modifier.size(46.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -260,10 +255,10 @@ private fun FileCard(file: DriveFile, enabled: Boolean, download: () -> Unit, de
                 if (file.folder.isNotEmpty()) Text(file.folder, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
             Box {
-                IconButton(onClick = { menu = true }, enabled = enabled) { Icon(Icons.Outlined.MoreVert, stringResource(R.string.file_actions)) }
+                IconButton(onClick = { menu = true }, enabled = enabled) { Icon(DriveIcons.MoreVert, stringResource(R.string.file_actions)) }
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.download)) }, leadingIcon = { Icon(Icons.Outlined.Download, null) }, onClick = { menu = false; download() })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) }, onClick = { menu = false; delete() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.download)) }, leadingIcon = { Icon(DriveIcons.Download, null) }, onClick = { menu = false; download() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, leadingIcon = { Icon(DriveIcons.DeleteOutline, null) }, onClick = { menu = false; delete() })
                 }
             }
         }

@@ -8,8 +8,6 @@ import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -26,8 +24,8 @@ import java.util.Date
     var create by remember{mutableStateOf(false)};var unlock by remember{mutableStateOf<VaultDescriptor?>(null)}
     var recoveryKey by remember{mutableStateOf<String?>(null)};val ui=rememberCoroutineScope()
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
-        item{InfoCard("Keep recovery separate","Losing both the vault password and recovery key can permanently prevent access. A Telegram phone code does not recover an encryption key. The vault label itself is not secret.",Icons.Outlined.Key)}
-        item{DriveButton(onClick={create=true},Modifier.fillMaxWidth()){Icon(Icons.Outlined.Add,null);Text("Create encrypted vault")}}
+        item{InfoCard("Keep recovery separate","Losing both the vault password and recovery key can permanently prevent access. A Telegram phone code does not recover an encryption key. The vault label itself is not secret.",DriveIcons.Key)}
+        item{DriveButton(onClick={create=true},Modifier.fillMaxWidth()){Icon(DriveIcons.Add,null);Text("Create encrypted vault")}}
         items(state.vaults,key={it.id}){vault->DriveCard(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text(vault.label,style=MaterialTheme.typography.titleMedium)
             Text(if(vault.id in state.unlockedVaultIds)"Unlocked on this device" else "Locked",color=MaterialTheme.colorScheme.primary)
@@ -48,8 +46,8 @@ import java.util.Date
     }
     unlock?.let{vault->
         var value by remember(vault.id){mutableStateOf("")};var recovery by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)}
-        AlertDialog(onDismissRequest={if(!busy)unlock=null},title={Text("Unlock ${vault.label}")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
-            Row{Checkbox(recovery,{recovery=it});Text("Use recovery key")}
+        AlertDialog(onDismissRequest={if(!busy)unlock=null},title={Text("Unlock ${vault.label}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            DriveCheckboxRow("Use recovery key",recovery,{recovery=it},enabled=!busy)
             DriveTextField(value,{value=it},label={Text(if(recovery)"64-character recovery key" else "Vault password")},visualTransformation=PasswordVisualTransformation(),enabled=!busy)
             if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{withContext(Dispatchers.Default){bundle.library.unlockVault(vault.id,value.toCharArray(),recovery)};value="";unlock=null}catch(e:Exception){bundle.library.report(e)}finally{busy=false}}},enabled=value.isNotBlank()&&!busy){Text("Unlock")}},dismissButton={TextButton(onClick={unlock=null},enabled=!busy){Text("Cancel")}})
@@ -60,7 +58,7 @@ import java.util.Date
             Text("Anyone holding this key and the encrypted files can unlock this vault. Do not send it to support, chat or the repository.")
             SelectionContainer{Text(key.chunked(8).joinToString(" "),style=MaterialTheme.typography.bodyLarge)}
             TextButton(onClick={confirmCopy=true}){Text("Copy key…")}
-            Row{Checkbox(saved,{saved=it});Text("I saved the key outside this app.",style=MaterialTheme.typography.bodySmall)}
+            DriveCheckboxRow("I saved the key outside this app.",saved,{saved=it})
         }},confirmButton={TextButton(onClick={recoveryKey=null},enabled=saved){Text("I saved it")}})
         if(confirmCopy)ConfirmDialog("Copy recovery key?","Other software may have access to your clipboard. Prefer a secure password manager or a written copy.","Copy sensitive key",{confirmCopy=false}){
             val clip=ClipData.newPlainText("Vault recovery key",key)
@@ -74,7 +72,7 @@ import java.util.Date
     var webdav by remember{mutableStateOf(state.preferences.webDavUrl)};var user by remember{mutableStateOf(state.preferences.webDavUser)}
     var password by remember{mutableStateOf("")};var server by remember{mutableStateOf(state.preferences.sharingUrl)};var token by remember{mutableStateOf("")}
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
-        item{InfoCard("Your own HTTPS endpoints","Ordinary Telegram uploads do not need these settings. WebDAV and public links require services you choose and control. No Telegram session is sent to either service.",Icons.Outlined.Link)}
+        item{InfoCard("Your own HTTPS endpoints","Ordinary Telegram uploads do not need these settings. WebDAV and public links require services you choose and control. No Telegram session is sent to either service.",DriveIcons.Link)}
         item{Text("WebDAV backup copy",style=MaterialTheme.typography.titleLarge)}
         item{DriveTextField(webdav,{webdav=it},label={Text("Final HTTPS WebDAV endpoint")},singleLine=true,modifier=Modifier.fillMaxWidth())}
         item{DriveTextField(user,{user=it},label={Text("WebDAV username")},singleLine=true,modifier=Modifier.fillMaxWidth())}

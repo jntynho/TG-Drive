@@ -10,28 +10,28 @@ import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-class TelegramStorage(val session: TelegramDrive) {
+class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSendCoordinator=TelegramSendCoordinator()) {
     private val fileLocks = ConcurrentHashMap<Int, Mutex>()
     suspend fun document(messageId: Long): TdApi.MessageDocument {
         val message = session.call(TdApi.GetMessage(session.savedMessagesId, messageId)) as TdApi.Message
         return message.content as? TdApi.MessageDocument ?: error("The original document is no longer available.")
     }
-    suspend fun sendDocument(source: File, caption: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {
+    suspend fun sendDocument(source: File, caption: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
         val first = session.call(TdApi.SendMessage().apply {
             chatId = session.savedMessagesId
             inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileLocal(source.absolutePath), null, true), TdApi.FormattedText(caption, emptyArray()))
         }) as TdApi.Message
         pending(first)
-        return session.awaitSent(first)
+        session.awaitSent(first)
     }
-    suspend fun sendText(text: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {
+    suspend fun sendText(text: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
         require(text.length <= 4000) { "Metadata text is too large" }
         val first = session.call(TdApi.SendMessage().apply {
             chatId = session.savedMessagesId
             inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, false)
         }) as TdApi.Message
         pending(first)
-        return session.awaitSent(first)
+        session.awaitSent(first)
     }
     suspend fun recoverPending(id: Long): TdApi.Message? {
         if (id == 0L) return null
@@ -44,7 +44,7 @@ class TelegramStorage(val session: TelegramDrive) {
         }
     }
     suspend fun delete(ids: List<Long>) {
-        ids.distinct().chunked(100).forEach { session.call(TdApi.DeleteMessages(session.savedMessagesId, it.toLongArray(), true)); delay(100) }
+        ids.distinct().chunked(100).forEach { sender.send { session.call(TdApi.DeleteMessages(session.savedMessagesId, it.toLongArray(), true)) } }
     }
     suspend fun readAll(messageId: Long): File {
         val document = document(messageId).document.document

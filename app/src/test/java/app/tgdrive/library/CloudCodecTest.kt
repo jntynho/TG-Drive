@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CloudCodecTest {
+    @Test fun `batched journal preserves every operation identity and legacy decoding`() {
+        val rows=(1..20).map{Envelope(kind=EntityKind.ITEM,entityId="file-$it",deviceId="phone",body=Item("file-$it","Photo $it.jpg").json())}
+        assertEquals(rows,CloudCodec.decodeMany(CloudCodec.encodeBatch(rows)))
+        assertEquals(listOf(rows.first()),CloudCodec.decodeMany(CloudCodec.encode(rows.first())))
+        assertTrue(runCatching{CloudCodec.encodeBatch(emptyList())}.isFailure)
+        assertTrue(runCatching{CloudCodec.decodeMany(CloudCodec.BATCH+"invalid")}.isFailure)
+    }
+
     @Test fun `cloud metadata roundtrips unicode and content identities`() {
         val op = Envelope(kind = EntityKind.ITEM, entityId = "uuid", deviceId = "phone", body = Item("uuid", "Café résumé.pdf", tags = listOf("work")).json())
         assertEquals(op, CloudCodec.decode(CloudCodec.encode(op)))

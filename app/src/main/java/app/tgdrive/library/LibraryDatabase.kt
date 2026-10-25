@@ -48,7 +48,12 @@ class LibraryDatabase(context: Context, val accountId: Long, private val codec: 
         var changed = false
         transaction {
             val seen = get("journal", op.operationId)?.model<JournalEntry>()
-            if (seen != null && !seen.pending) return@transaction
+            if (seen != null) {
+                // Acknowledging an already applied operation must not replay an ancestor
+                // over later local edits or invent a concurrent-edit conflict.
+                if(seen.pending && !entry.pending)put("journal",op.operationId,seen.copy(messageId=entry.messageId,pending=false).json())
+                return@transaction
+            }
             val previous = entity(op.kind, op.entityId)
             if (previous == null || previous.operationId == op.operationId || previous.operationId == op.parentOperationId || previous.operationId in op.resolves) {
                 putEntity(op); changed = true

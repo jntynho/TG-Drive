@@ -66,4 +66,10 @@ The native device suite also passed on GitHub's accelerated Android 30 emulator 
 
 The 0.4.0 navigation update adds collection tests for media MIME filtering, current-version upload ordering, nested folders, unfinished uploads, Trash and vault visibility. Compose tests cover the four navigation choices, Home management links and Gallery preview/action separation. Preference editor tests cover immediate feedback, rapid alternating changes, preserved unrelated fields and rollback on storage failure. A repository integration test verifies preferences persist without republishing library item lists. Generated Home/Gallery/settings previews use synthetic fixtures; they do not prove authenticated Telegram behavior or physical-device animation performance.
 
-Local 0.4.0 validation: 72 tests per Debug/Release variant, including the new interaction and preference cases; zero failures/errors. Lint reports no errors (24 warnings, without suppressions). Native instrumentation compilation and actionlint also pass. Release signing, native emulator execution, upgrade retention and publication are verified separately by the matching Actions run.
+Local 0.4.0 validation before the saved-tab compatibility case: 72 tests per Debug/Release variant, including the new interaction and preference cases; zero failures/errors. Lint reports no errors (24 warnings, without suppressions). Native instrumentation compilation and actionlint also pass. Release signing, native emulator execution, upgrade retention and publication are verified separately by the matching Actions run.
+
+Saved-tab compatibility also verifies that serialized 0.3.0 tab values restore to Home and the bottom bar exposes only the four new destinations. New state stores stable strings.
+
+## 0.5 checks
+
+New cases cover the 4:5 gallery's accessible labels without visible filenames/menus, the adaptive header/account action, aspect-aware zoom bounds, server cooldown persistence and retry blocking, batched metadata/legacy decoding, metadata retry without content re-upload, bounded preparation, completion callbacks and preserving sibling records when deleting a shared metadata batch. Rendered previews are synthetic fixtures. Physical-device avatar refresh, photo gestures, video codecs/audio focus and live Telegram rate/throughput still require account/device acceptance.

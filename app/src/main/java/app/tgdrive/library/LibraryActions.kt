@@ -34,10 +34,9 @@ class LibraryActions(val repository: LibraryRepository, val transfers: TransferE
         for (id in ids) {
             val item = repository.item(id)
             val versions = repository.state.value.versions.filter { it.itemId == id }
-            val metadataMessages = repository.db().all("journal").map { it.model<JournalEntry>() }
-                .filter { it.envelope.entityId == id || versions.any { v -> v.id == it.envelope.entityId } }.map { it.messageId }.filter { it != 0L }
+            repository.deleteCloudMetadata(versions.map{it.id}.toSet()+id)
             val contentMessages = versions.flatMap { (it.parts + listOfNotNull(it.thumbnail)).map { part -> part.messageId } }
-            repository.remote.delete((metadataMessages + contentMessages).distinct())
+            repository.remote.delete(contentMessages.distinct())
             repository.mutate { db ->
                 val entityIds = versions.map { it.id }.toSet() + id
                 db.entries("journal").filter { it.second.model<JournalEntry>().envelope.entityId in entityIds }.forEach { db.remove("journal",it.first) }
