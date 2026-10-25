@@ -58,3 +58,6 @@ For signed output, also run `apksigner verify --verbose --print-certs`. Run `con
 The separate `bundleOnly` build directory works around AGP’s multi-APK/resource-shrinking bundle limitation. Build the AAB separately with `-PbundleOnly=true`, without `splitApks`; neither task overwrites the other’s metadata or outputs.
 
 Local packaging validation for 0.2.1: ARM64 APK approximately 39.7 MB (19.0 MB in a single-APK ZIP at compression level 6), ARM32 approximately 29.1 MB (16.9 MB ZIP), universal approximately 139 MB. These measurements are from unsigned local output; signed artifact sizes may vary slightly. All five APKs had identical code/resources/assets and matching per-ABI native bytes, and all 24 native-library entries passed alignment checks. Release unit tests: 61 passed; lint had no errors. Actual signed upgrade results are reported by the workflow's `upgrade-check` job; no authenticated Telegram session is used there.
+
+
+0.9 is a UI/UX and behavior correction release. The cloud caption/journal format stays compatible with 0.7/0.8, and the existing signing identity is mandatory. See [the correction matrix](UI-UX-0.9.ar.md) for details and device-validation limits.

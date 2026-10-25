@@ -18,6 +18,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +31,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.tgdrive.library.*
 import app.tgdrive.data.FileMetadata
+import app.tgdrive.data.formatBytes
 import app.tgdrive.ui.*
 import kotlinx.coroutines.*
 import java.io.File
@@ -39,13 +41,16 @@ import java.io.File
 
 class MainActivity : FragmentActivity() {
     private val app get()=application as DriveApp
+    private val preparation by lazy{androidx.lifecycle.ViewModelProvider(this)[PreparationModel::class.java]}
+    private var reconnectRuleId:String?=null
+    private var notificationRoute by mutableStateOf("")
     private var target=PendingTarget()
     private var saveTarget=SaveTarget()
     private var pickedTree by mutableStateOf<Uri?>(null)
     private var scanImages by mutableStateOf<List<Uri>>(emptyList())
     private var scannerOpen by mutableStateOf(false)
     private var cameraUri:Uri?=null
-    private var cleanupItems by mutableStateOf<List<Item>?>(null)
+    private var cleanupIds by mutableStateOf<List<String>>(emptyList())
     private var locked by mutableStateOf(false)
     private var pendingShared by mutableStateOf<List<Uri>>(emptyList())
     private var sharedFolder by mutableStateOf("")
@@ -55,10 +60,12 @@ class MainActivity : FragmentActivity() {
     private var backgroundAt=0L
     private val notices=registerForActivityResult(ActivityResultContracts.RequestPermission()){}
     private val uploads=registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty())enqueueInputs(uris,target.copy())}
-    private val scanPicker=registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty()){scanImages=uris;scannerOpen=true}}
+    private val scanPicker=registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty()){uris.forEach{runCatching{contentResolver.takePersistableUriPermission(it,Intent.FLAG_GRANT_READ_URI_PERMISSION)}};scanImages=uris;scannerOpen=true}}
     private val capture=registerForActivityResult(ActivityResultContracts.TakePicture()){ok->if(ok&&cameraUri!=null){scanImages=scanImages+cameraUri!!;scannerOpen=true}}
     private val tree=registerForActivityResult(ActivityResultContracts.OpenDocumentTree()){uri->
-        if(uri!=null){runCatching{contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}.onFailure{app.sessions.bundle(target.profile).library.report(it)};pickedTree=uri}
+        if(uri!=null){runCatching{contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}.onFailure{app.sessions.bundle(target.profile).library.report(it)};val reconnect=reconnectRuleId
+            if(reconnect!=null){reconnectRuleId=null;val b=app.sessions.bundle(target.profile);b.actions.run{b.library.reconnectRule(reconnect,uri);b.library.notice("Folder access restored.")}}else pickedTree=uri}
+        else reconnectRuleId=null
     }
     private val save=registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){uri->if(uri!=null)saveResult(uri,saveTarget.copy())}
     private val indexInput=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null){val b=app.sessions.bundle(target.profile);b.actions.run{b.library.importIndex(uri);startQueue(b.profile.id)}}}
@@ -72,6 +79,13 @@ class MainActivity : FragmentActivity() {
         target=runCatching{savedInstanceState?.getString("target")?.model<PendingTarget>()}.getOrNull()?:PendingTarget(app.sessions.activeId.value)
         saveTarget=runCatching{savedInstanceState?.getString("save")?.model<SaveTarget>()}.getOrNull()?:SaveTarget(app.sessions.activeId.value)
         cameraUri=savedInstanceState?.getString("camera")?.let(Uri::parse)
+        pickedTree=savedInstanceState?.getString("pickedTree")?.let(Uri::parse)
+        reconnectRuleId=savedInstanceState?.getString("reconnectRule")
+        scannerOpen=savedInstanceState?.getBoolean("scannerOpen")?:false
+        cleanupIds=savedInstanceState?.getStringArrayList("cleanupIds")?:emptyList()
+        scanImages=savedInstanceState?.getStringArrayList("scanImages")?.map(Uri::parse)?:emptyList()
+        notificationRoute=savedInstanceState?.getString("notificationRoute").orEmpty()
+        handleNotification(intent)
         pendingShared=savedInstanceState?.getStringArrayList("shared")?.map(Uri::parse)?:emptyList()
         setContent{
             val active by app.sessions.activeId.collectAsStateWithLifecycle()
@@ -90,20 +104,32 @@ class MainActivity : FragmentActivity() {
                 backupFolder={folder,vault->target=PendingTarget(active,folder,vault);tree.launch(null)},
                 scan={folder,vault->target=PendingTarget(active,folder,vault);scanImages=emptyList();scannerOpen=true},
                 shareExternal={item->exportToApp(bundle,item,true)},openExternal={item->exportToApp(bundle,item,false)},
-                cleanup={ids->cleanupItems=bundle.library.state.value.items.filter{it.id in ids}},
+                cleanup={ids->cleanupIds=ids},
                 play={item->play(bundle,item)},
                 setAppLock={enabled->changeAppLock(bundle,enabled)},
                 startTransfers={startQueue(active)},
                 scanBackups={rule,force->startQueue(active,rule,force,true)},
+                transferSettings={notificationRoute="transferSettings"},vaultSettings={notificationRoute="vaultSettings"},
+                reconnectBackup={id->target=PendingTarget(active);reconnectRuleId=id;tree.launch(bundle.library.state.value.rules.firstOrNull{it.id==id}?.treeUri?.let(Uri::parse))},
             )}
             DriveTheme{
                 if(locked)Surface(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(32.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                     Text("Your space is locked",style=MaterialTheme.typography.headlineMedium);Spacer(Modifier.height(14.dp));Text("Use your device credential or biometrics to continue.");Spacer(Modifier.height(22.dp));DriveButton(onClick={authenticate()}){Text("Unlock TG Drive")}
-                }}else key(active){NativeApp(bundle,app.sessions,system)}
+                }}else key(active){NativeApp(bundle,app.sessions,system,notificationRoute,{notificationRoute=""})}
                 if(!locked){
+                    LaunchedEffect(preparation.export,active){preparation.export?.takeIf{it.profile==active}?.let{result->
+                        preparation.export=null
+                        val command=Intent(if(result.share)Intent.ACTION_SEND else Intent.ACTION_VIEW).apply{
+                            if(result.share){type=result.mime;putExtra(Intent.EXTRA_STREAM,result.uri)}else setDataAndType(result.uri,result.mime)
+                            clipData=ClipData.newRawUri(result.name,result.uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        runCatching{startActivity(Intent.createChooser(command,if(result.share)"Share a copy"else"Open file"))}.onFailure{bundle.library.notice("No compatible application is installed.")}
+                    }}
+                    preparation.message?.let{message->AlertDialog(onDismissRequest={},title={Text("Preparing files")},text={Column{Text(message);LinearProgressIndicator(Modifier.fillMaxWidth())}},confirmButton={TextButton({preparation.job?.cancel()}){Text("Cancel")}})}
+                    preparation.error?.let{message->AlertDialog(onDismissRequest={preparation.error=null},title={Text("File preparation")},text={Text(message,Modifier.heightIn(max=400.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()))},confirmButton={TextButton({preparation.error=null}){Text("Done")}})}
                     pickedTree?.let{uri->BackupWizard(uri,bundle)}
                     if(scannerOpen)ScannerWizard(bundle)
-                    cleanupItems?.let{rows->CleanupWizard(rows,bundle)}
+                    if(cleanupIds.isNotEmpty())CleanupWizard(state.items.filter{it.id in cleanupIds},bundle)
                     if(pendingShared.isNotEmpty()&&state.loaded)AlertDialog(onDismissRequest={pendingShared=emptyList()},title={Text("Save shared files?")},text={Column{
                         Text("${pendingShared.size} files will be added to ${folderPath(sharedFolder,state.folders)}. No upload starts until you approve.")
                         TextButton(onClick={sharedFolderPicker=true}){Text("Choose destination")}
@@ -114,8 +140,8 @@ class MainActivity : FragmentActivity() {
         }
         handleShare(intent)
     }
-    override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);handleShare(intent)}
-    override fun onSaveInstanceState(out:Bundle){out.putString("target",target.json());out.putString("save",saveTarget.json());out.putStringArrayList("shared",ArrayList(pendingShared.map{it.toString()}));cameraUri?.let{out.putString("camera",it.toString())};super.onSaveInstanceState(out)}
+    override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);handleNotification(intent);handleShare(intent)}
+    override fun onSaveInstanceState(out:Bundle){out.putString("target",target.json());out.putString("save",saveTarget.json());out.putStringArrayList("shared",ArrayList(pendingShared.map{it.toString()}));cameraUri?.let{out.putString("camera",it.toString())};out.putString("pickedTree",pickedTree?.toString());out.putString("reconnectRule",reconnectRuleId);out.putBoolean("scannerOpen",scannerOpen);out.putStringArrayList("scanImages",ArrayList(scanImages.map{it.toString()}));out.putString("notificationRoute",notificationRoute);out.putStringArrayList("cleanupIds",ArrayList(cleanupIds));super.onSaveInstanceState(out)}
     override fun onStart(){super.onStart();lockJob?.cancel();val id=app.sessions.activeId.value;if(app.sessions.lockEnabled(id)){if(!app.authorized(id))locked=true else app.authorize(id)}}
     override fun onStop(){
         super.onStop();if(isChangingConfigurations)return
@@ -151,19 +177,35 @@ class MainActivity : FragmentActivity() {
     }
     private fun enqueueInputs(uris:List<Uri>,destination:PendingTarget){
         val bundle=app.sessions.bundle(destination.profile)
-        bundle.scope.launch(Dispatchers.IO){try{
-            bundle.library.awaitReady()
-            val durable=uris.map{durableInput(it)}
-            bundle.transfers.enqueueUpload(durable,destination.folder,destination.vault,destination.replacement)
-            startQueue(destination.profile)
-        }catch(e:Exception){bundle.library.report(e)}}
+        if(preparation.job?.isActive==true){bundle.library.notice("Wait for the current file preparation or cancel it first.");return}
+        if(uris.size>1000 || destination.replacement.isNotEmpty()&&uris.size!=1){bundle.library.notice("Choose at most 1,000 files, or one file when replacing content.");return}
+        preparation.message="Preparing 0 of ${uris.size} files…";preparation.error=null
+        preparation.job=bundle.scope.launch(Dispatchers.IO){var accepted=0;var failures=0;val failedDetails=mutableListOf<String>()
+            try{
+                bundle.library.awaitReady()
+                val account=bundle.library.state.value.accountId
+                for((index,uri) in uris.withIndex()){
+                    ensureActive();bundle.library.checkAccount(account)
+                    preparation.message="Preparing ${index+1} of ${uris.size} · $accepted queued"
+                    try{
+                        val durable=durableInput(uri,destination.profile)
+                        bundle.library.checkAccount(account)
+                        bundle.transfers.enqueueUpload(listOf(durable),destination.folder,destination.vault,destination.replacement)
+                        accepted++;startQueue(destination.profile)
+                    }catch(e:CancellationException){throw e}catch(e:Exception){failures++;if(failedDetails.size<20){val name=runCatching{contentResolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use{if(it.moveToFirst())it.getString(0)else null}}.getOrNull()?:"File ${index+1}";failedDetails+="$name: ${e.message?:"Could not read this file."}"}}
+                }
+                if(failures>0)preparation.error="$accepted files queued. $failures could not be prepared; select those files again to retry.\n\n"+failedDetails.joinToString("\n")+(if(failures>20)"\nAnd ${failures-20} more files."else"")
+            }catch(e:CancellationException){bundle.library.notice("Preparation stopped. $accepted files already queued remain in Activity.");throw e}
+            catch(e:Exception){preparation.error=e.message?:"Could not prepare files."}
+            finally{preparation.message=null}
+        }
     }
-    private suspend fun durableInput(uri:Uri):Uri=withContext(Dispatchers.IO){
+    private suspend fun durableInput(uri:Uri,profile:String):Uri=withContext(Dispatchers.IO){
         if(uri.authority=="$packageName.files")return@withContext uri
         if(runCatching{contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}.isSuccess)return@withContext uri
         val display=contentResolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use{if(it.moveToFirst())it.getString(0)else null}?:"shared-file"
         val name=FileMetadata.safeName(display).takeUnless{it=="."||it==".."}?:"file"
-        val directory=File(filesDir,"owned-inputs/${newId()}").apply{mkdirs()};val output=File(directory,name)
+        val directory=File(filesDir,"owned-inputs/$profile/${newId()}").apply{mkdirs()};val output=File(directory,name)
         try{
             contentResolver.openInputStream(uri)?.use{input->output.outputStream().use{out->
                 val limit=(filesDir.usableSpace-32*1024*1024).coerceAtLeast(0)
@@ -197,60 +239,73 @@ class MainActivity : FragmentActivity() {
         if(uris.isNotEmpty())pendingShared=uris
         intent.action=Intent.ACTION_MAIN // Avoid submitting the same share after activity recreation.
     }
-    private fun exportToApp(bundle:SessionBundle,item:Item,share:Boolean){bundle.actions.run{
-        val file=bundle.library.cache!!.lease(item.versionId).use {
-            val source=bundle.library.cache!!.materialize(item,bundle.library.version(item.versionId),bundle.library.itemVault(item.id))
-            val export=File(cacheDir,"exports/${newId()}/${item.name}").apply{parentFile!!.mkdirs()}
-            source.inputStream().use{input->export.outputStream().use{copyChecked(input,it)}};export
+    private fun exportToApp(bundle:SessionBundle,item:Item,share:Boolean){
+        if(preparation.job?.isActive==true){bundle.library.notice("Wait for file preparation or cancel it first.");return}
+        preparation.message="Downloading and preparing a copy…";preparation.error=null
+        val account=bundle.library.state.value.accountId
+        preparation.job=bundle.scope.launch(Dispatchers.IO){
+            var export:File?=null
+            try{
+                bundle.library.checkAccount(account)
+                val file=bundle.library.cache!!.lease(item.versionId).use {
+                    val source=bundle.library.cache!!.materialize(item,bundle.library.version(item.versionId),bundle.library.itemVault(item.id))
+                    val output=File(cacheDir,"exports/${newId()}/${item.name}").apply{parentFile!!.mkdirs()};export=output
+                    source.inputStream().use{input->output.outputStream().use{out->copyChecked(input,out){copied->preparation.message="Preparing copy · ${formatBytes(copied)}"}}};output
+                }
+                bundle.library.checkAccount(account);check(bundle.library.vaults.isUnlocked(bundle.library.itemVault(item.id)))
+                val uri=FileProvider.getUriForFile(applicationContext,"$packageName.files",file)
+                preparation.export=PreparedExport(uri,item.mime,item.name,share,bundle.profile.id)
+                export=null
+            }catch(e:CancellationException){throw e}
+            catch(e:Exception){preparation.error=e.message?:"Could not prepare this copy."}
+            finally{export?.parentFile?.deleteRecursively();preparation.message=null}
         }
-        val uri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file)
-        withContext(Dispatchers.Main){
-            val command=Intent(if(share)Intent.ACTION_SEND else Intent.ACTION_VIEW).apply{
-                if(share){type=item.mime;putExtra(Intent.EXTRA_STREAM,uri)}else setDataAndType(uri,item.mime)
-                clipData=ClipData.newRawUri(item.name,uri);addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            runCatching{startActivity(Intent.createChooser(command,if(share)"Share a copy" else "Open file"))}.onFailure{bundle.library.notice("No compatible application is installed.")}
-        }
-    }}
+    }
+    private fun handleNotification(intent:Intent?){
+        val profile=intent?.getStringExtra("openProfile")?:return
+        if(app.sessions.profiles.value.any{it.id==profile}){app.sessions.switch(profile);notificationRoute=intent.getStringExtra("openRoute")?:"activity"}
+        intent.removeExtra("openProfile");intent.removeExtra("openRoute")
+    }
     private fun play(bundle:SessionBundle,item:Item){
         val command=Intent(this,PlaybackService::class.java).setAction(PlaybackService.PLAY).putExtra("profile",bundle.profile.id).putExtra("item",item.id)
         runCatching{ContextCompat.startForegroundService(this,command)}.onFailure{bundle.library.report(it)}
     }
     @Composable private fun BackupWizard(uri:Uri,bundle:SessionBundle){
-        var name by remember(uri){mutableStateOf("Selected folder")};var fromToday by remember{mutableStateOf(false)}
-        AlertDialog(onDismissRequest={pickedTree=null},title={Text("Back up this folder")},text={Column{
+        var name by androidx.compose.runtime.saveable.rememberSaveable(uri.toString()){mutableStateOf("Selected folder")};var fromToday by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(false)};val form=rememberFormAction()
+        AlertDialog(onDismissRequest={if(!form.busy)pickedTree=null},title={Text("Back up this folder")},text={Column{
+            form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(form.busy)LinearProgressIndicator(Modifier.fillMaxWidth())
             DriveTextField(name,{name=it},label={Text("Rule name")});DriveCheckboxRow("Only files modified from today",fromToday,{fromToday=it})
             Text("This is upload-only. Background scheduling depends on Android, network rules and destination vault availability.",style=MaterialTheme.typography.bodySmall)
-        }},confirmButton={TextButton(onClick={val dest=target.copy();val chosen=uri;app.sessions.bundle(dest.profile).actions.run{
+        }},confirmButton={TextButton(onClick={val dest=target.copy();val chosen=uri;form.run({pickedTree=null}){
             val b=app.sessions.bundle(dest.profile);b.backups.add(chosen,name,dest.folder,dest.vault,if(fromToday)now()else 0);BackgroundWork.schedule(this@MainActivity,dest.profile,b.library.state.value.preferences.scanIntervalHours);startQueue(dest.profile,scan=true)
-        };pickedTree=null},enabled=name.isNotBlank()){Text("Save and scan")}},dismissButton={TextButton(onClick={pickedTree=null}){Text("Cancel")}})
+        }},enabled=name.isNotBlank()&&!form.busy){Text("Save and scan")}},dismissButton={TextButton(onClick={pickedTree=null},enabled=!form.busy){Text("Cancel")}})
     }
     @Composable private fun ScannerWizard(bundle:SessionBundle){
-        var trim by remember{mutableFloatStateOf(0f)};var rotation by remember{mutableIntStateOf(0)};var grayscale by remember{mutableStateOf(true)};var busy by remember{mutableStateOf(false)}
+        var trim by androidx.compose.runtime.saveable.rememberSaveable{mutableFloatStateOf(0f)};var rotation by androidx.compose.runtime.saveable.rememberSaveable{mutableIntStateOf(0)};var grayscale by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(true)};var busy by remember{mutableStateOf(false)};var localError by remember{mutableStateOf<String?>(null)}
         val ui=rememberCoroutineScope()
         AlertDialog(onDismissRequest={if(!busy)scannerOpen=false},title={Text("Scan to PDF")},text={Column{
             Text("${scanImages.size} selected pages. Processing stays on this device.")
             Row{TextButton(onClick={
-                val file=File(filesDir,"captures/camera-${newId()}.jpg").apply{parentFile!!.mkdirs()};cameraUri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file);capture.launch(cameraUri!!)
+                val file=File(filesDir,"captures/${bundle.profile.id}/camera-${newId()}.jpg").apply{parentFile!!.mkdirs()};cameraUri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file);capture.launch(cameraUri!!)
             },enabled=!busy){Text("Camera")};TextButton(onClick={scanPicker.launch(arrayOf("image/*"))},enabled=!busy){Text("Choose images")}}
             Text("Trim edges: ${(trim*100).toInt()}%");Slider(trim,{trim=it},valueRange=0f..0.2f,enabled=!busy)
             TextButton(onClick={rotation=(rotation+90)%360},enabled=!busy){Text("Rotate pages: $rotation°")}
             DriveCheckboxRow("Grayscale",grayscale,{grayscale=it},enabled=!busy)
             Text("Manual edge trim; automatic document-edge detection is not implied.",style=MaterialTheme.typography.bodySmall)
-            if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+            localError?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{
             val dest=target.copy();val b=app.sessions.bundle(dest.profile)
             val file=DocumentTools(b.library).createPdf(scanImages,trim,rotation,grayscale)
             val source=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file)
             enqueueInputs(listOf(source),dest);scannerOpen=false;scanImages=emptyList()
-        }catch(e:Exception){bundle.library.report(e)}finally{busy=false}}},enabled=scanImages.isNotEmpty()&&!busy){Text("Create PDF and upload")}},dismissButton={TextButton(onClick={scannerOpen=false},enabled=!busy){Text("Cancel")}})
+        }catch(e:CancellationException){throw e}catch(e:Exception){localError=e.message?:"Please try again."}finally{busy=false}}},enabled=scanImages.isNotEmpty()&&!busy){Text("Create PDF and upload")}},dismissButton={TextButton(onClick={scannerOpen=false},enabled=!busy){Text("Cancel")}})
     }
     @Composable private fun CleanupWizard(rows:List<Item>,bundle:SessionBundle){
-        var selected by remember{mutableStateOf(setOf<String>())};var busy by remember{mutableStateOf(false)};val ui=rememberCoroutineScope()
-        AlertDialog(onDismissRequest={if(!busy)cleanupItems=null},title={Text("Choose local originals")},text={Column{
+        var selected by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(setOf<String>())};var busy by remember{mutableStateOf(false)};var localError by remember{mutableStateOf<String?>(null)};val ui=rememberCoroutineScope()
+        AlertDialog(onDismissRequest={if(!busy)cleanupIds=emptyList()},title={Text("Choose local originals")},text={Column{
             Text("Selected originals will be hashed again and their cloud references checked before deletion.")
             LazyColumn(Modifier.heightIn(max=300.dp)){items(rows,key={it.id}){item->DriveCheckboxRow(item.name,item.id in selected,{value->selected=if(value)selected+item.id else selected-item.id},enabled=!busy)}}
-            if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+            localError?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{
             val uris=bundle.actions.validateLocalDeletion(selected.toList())
             if(Build.VERSION.SDK_INT>=30&&uris.all{it.authority==MediaStore.AUTHORITY})deletion.launch(ActivityResultContracts.StartIntentSenderForResult().let{androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createDeleteRequest(contentResolver,uris).intentSender).build()})
@@ -259,7 +314,7 @@ class MainActivity : FragmentActivity() {
                 withContext(Dispatchers.IO){uris.forEach{uri->require(DocumentsContract.isDocumentUri(this@MainActivity,uri)){"This provider requires deletion through its own app."};check(DocumentsContract.deleteDocument(contentResolver,uri)){"Provider did not delete the selected source."}}}
                 bundle.library.notice("Selected local originals deleted. Cloud copies were retained.")
             }
-            cleanupItems=null
-        }catch(e:Exception){bundle.library.report(e)}finally{busy=false}}},enabled=selected.isNotEmpty()&&!busy){Text("Verify and confirm deletion")}},dismissButton={TextButton(onClick={cleanupItems=null},enabled=!busy){Text("Cancel")}})
+            cleanupIds=emptyList()
+        }catch(e:CancellationException){throw e}catch(e:Exception){localError=e.message?:"Please try again."}finally{busy=false}}},enabled=selected.isNotEmpty()&&!busy){Text("Verify and confirm deletion")}},dismissButton={TextButton(onClick={cleanupIds=emptyList()},enabled=!busy){Text("Cancel")}})
     }
 }

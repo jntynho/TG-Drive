@@ -57,7 +57,7 @@ class DocumentTools(private val repository: LibraryRepository) {
     }
     suspend fun createPdf(images: List<Uri>, trim: Float, rotate: Int, grayscale: Boolean): File = withContext(Dispatchers.IO) {
         require(images.isNotEmpty()&&images.size<=50)
-        val output=File(repository.context.filesDir,"captures/scan-${newId()}.pdf").apply { parentFile!!.mkdirs() }
+        val output=File(repository.context.filesDir,"captures/${repository.session.profileId}/scan-${newId()}.pdf").apply { parentFile!!.mkdirs() }
         val document=PdfDocument()
         try {
             images.forEachIndexed { index,uri ->

@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 
-@Serializable data class AccountProfile(val id: String = "legacy", val label: String = "My Telegram", val userId: Long = 0)
+@Serializable data class AccountProfile(val id: String = "legacy", val label: String = "My Telegram", val userId: Long = 0,val lastUserId:Long=0)
 
 class SessionBundle(context: Context, val profile: AccountProfile, allowAccount:(Long)->Boolean={true}) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -50,12 +50,12 @@ class SessionPool(private val context: Context) {
         return bundles.computeIfAbsent(id) {
             SessionBundle(context, profile) { account -> mutableProfiles.value.none { it.id!=id && it.userId==account } }.also { b ->
                 b.scope.launch { b.drive.state.collect { auth ->
-                    if(auth.login==app.tgdrive.data.LoginStep.CLOSED){mutableProfiles.value=mutableProfiles.value.map{if(it.id==id)it.copy(userId=0,label="Signed out")else it};save()}
+                    if(auth.login==app.tgdrive.data.LoginStep.CLOSED){mutableProfiles.value=mutableProfiles.value.map{if(it.id==id)it.copy(lastUserId=it.userId.takeIf{user->user!=0L}?:it.lastUserId,userId=0,label="Signed out")else it};save()}
                 } }
                 b.scope.launch {
                     b.library.state.collect { state ->
                         if (state.loaded && state.accountId != 0L) {
-                            val updated = mutableProfiles.value.map { if(it.id == id)it.copy(label = state.accountName.ifBlank { "Telegram account" }, userId = state.accountId) else it }
+                            val updated = mutableProfiles.value.map { if(it.id == id)it.copy(label = state.accountName.ifBlank { "Telegram account" }, userId = state.accountId,lastUserId=state.accountId) else it }
                             if(updated != mutableProfiles.value) { mutableProfiles.value = updated; save() }
                         }
                     }
@@ -76,6 +76,27 @@ class SessionPool(private val context: Context) {
                 mutableProfiles.value+=profile;switch(profile.id)
             }catch(e:Exception){original.library.report(e)}
         }
+    }
+    suspend fun removeSignedOut(id:String){
+        require(id!=activeId.value){"Switch to another profile before removing this one."}
+        require(profiles.value.size>1){"Keep at least one local profile."}
+        val profile=profiles.value.firstOrNull{it.id==id}?:return
+        require(profile.userId==0L){"Sign out of this account before removing its local profile."}
+        val bundle=bundles[id]
+        require(bundle==null||bundle.drive.state.value.login in setOf(app.tgdrive.data.LoginStep.CLOSED,app.tgdrive.data.LoginStep.CONFIGURE)) {"Finish signing out first."}
+        require(profile.lastUserId!=0L||profile.label!="Signed out"||bundle?.library?.database!=null){"Sign in to this older profile once to review its saved work before removing it."}
+        val opened=bundle?.library?.database
+        val pending=withContext(Dispatchers.IO){
+            val database=opened?:profile.lastUserId.takeIf{it!=0L}?.let{LibraryDatabase(context,it,LocalRowCipher(it))}
+            try{database?.tasks()?.any{it.profileId==id&&it.state !in setOf(TaskState.COMPLETED,TaskState.CANCELLED)}==true}
+            finally{if(opened==null)database?.close()}
+        }
+        require(!pending){"Sign in to this profile and finish or cancel its pending work before removing it."}
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork("backup-$id")
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork("library-$id")
+        bundle?.drive?.closeInactiveProfile()
+        bundles.remove(id)?.let{it.scope.cancel();it.library.database?.close()}
+        mutableProfiles.value=mutableProfiles.value.filter{it.id!=id};save()
     }
     fun switch(id: String) { require(profiles.value.any { it.id == id }); if(id!=activeId.value)bundles[activeId.value]?.let{previous->previous.scope.launch{PlaybackService.stopProtected(context);previous.transfers.pauseProtected();previous.library.lockVaults()}}; mutableActive.value = id; save() }
     fun lockEnabled(id: String) = preferences.getBoolean("lock:$id", false)

@@ -21,8 +21,12 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable fun VaultsPage(state:LibraryState,bundle:SessionBundle){
-    var create by remember{mutableStateOf(false)};var unlock by remember{mutableStateOf<VaultDescriptor?>(null)}
-    var recoveryKey by remember{mutableStateOf<String?>(null)};val ui=rememberCoroutineScope()
+    var create by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(false)};var unlock by remember{mutableStateOf<VaultDescriptor?>(null)}
+    var recoveryKey by remember{mutableStateOf<String?>(null)};var recoveryId by remember{mutableStateOf("")};val ui=rememberCoroutineScope()
+    LaunchedEffect(state.vaults,state.accountId){
+        for(vault in state.vaults){val key=bundle.library.accountSecret("pending-recovery:${vault.id}")
+            if(!key.isNullOrBlank()){recoveryId=vault.id;recoveryKey=key;break}}
+    }
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
         item{InfoCard("Keep recovery separate","Losing both the vault password and recovery key can permanently prevent access. A Telegram phone code does not recover an encryption key. The vault label itself is not secret.",DriveIcons.Key)}
         item{DriveButton(onClick={create=true},Modifier.fillMaxWidth()){Icon(DriveIcons.Add,null);Text("Create encrypted vault")}}
@@ -35,31 +39,31 @@ import java.util.Date
         item{InfoCard("Temporary previews are protected","Locking clears assembled preview copies and removes decrypted metadata from the visible library. Exports you explicitly saved outside the app cannot be recalled. Protected background jobs wait for unlocking.")}
     }
     if(create){
-        var label by remember{mutableStateOf("")};var password by remember{mutableStateOf("")};var confirmation by remember{mutableStateOf("")};var busy by remember{mutableStateOf(false)}
+        var label by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf("")};var password by remember{mutableStateOf("")};var confirmation by remember{mutableStateOf("")};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)}
         AlertDialog(onDismissRequest={if(!busy)create=false},title={Text("Create vault")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
             DriveTextField(label,{label=it},label={Text("Vault label")},singleLine=true,enabled=!busy)
             DriveTextField(password,{password=it},label={Text("Password · at least 12 characters")},visualTransformation=PasswordVisualTransformation(),singleLine=true,enabled=!busy)
             DriveTextField(confirmation,{confirmation=it},label={Text("Confirm password")},visualTransformation=PasswordVisualTransformation(),singleLine=true,enabled=!busy)
             Text("A recovery key is shown once after creation. Save it somewhere independent of this phone.",style=MaterialTheme.typography.bodySmall)
-            if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
-        }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{recoveryKey=withContext(Dispatchers.Default){bundle.library.createVault(label,password.toCharArray())};password="";confirmation="";create=false}catch(e:Exception){bundle.library.report(e)}finally{busy=false}}},enabled=label.isNotBlank()&&password.length>=12&&password==confirmation&&!busy){Text("Create vault")}},dismissButton={TextButton(onClick={create=false},enabled=!busy){Text("Cancel")}})
+            error?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+        }},confirmButton={TextButton(onClick={ui.launch{busy=true;error=null;try{withContext(Dispatchers.Default){bundle.library.createVault(label,password.toCharArray())};password="";confirmation="";create=false}catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Please try again."}finally{busy=false}}},enabled=label.isNotBlank()&&password.length>=12&&password==confirmation&&!busy){Text("Create vault")}},dismissButton={TextButton(onClick={create=false},enabled=!busy){Text("Cancel")}})
     }
     unlock?.let{vault->
-        var value by remember(vault.id){mutableStateOf("")};var recovery by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)}
+        var value by remember(vault.id){mutableStateOf("")};var recovery by remember{mutableStateOf(false)};var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)}
         AlertDialog(onDismissRequest={if(!busy)unlock=null},title={Text("Unlock ${vault.label}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
             DriveCheckboxRow("Use recovery key",recovery,{recovery=it},enabled=!busy)
             DriveTextField(value,{value=it},label={Text(if(recovery)"64-character recovery key" else "Vault password")},visualTransformation=PasswordVisualTransformation(),enabled=!busy)
-            if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
-        }},confirmButton={TextButton(onClick={ui.launch{busy=true;try{withContext(Dispatchers.Default){bundle.library.unlockVault(vault.id,value.toCharArray(),recovery)};value="";unlock=null}catch(e:Exception){bundle.library.report(e)}finally{busy=false}}},enabled=value.isNotBlank()&&!busy){Text("Unlock")}},dismissButton={TextButton(onClick={unlock=null},enabled=!busy){Text("Cancel")}})
+            error?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
+        }},confirmButton={TextButton(onClick={ui.launch{busy=true;error=null;try{withContext(Dispatchers.Default){bundle.library.unlockVault(vault.id,value.toCharArray(),recovery)};value="";unlock=null}catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Please try again."}finally{busy=false}}},enabled=value.isNotBlank()&&!busy){Text("Unlock")}},dismissButton={TextButton(onClick={unlock=null},enabled=!busy){Text("Cancel")}})
     }
     recoveryKey?.let{key->
         var saved by remember{mutableStateOf(false)};var confirmCopy by remember{mutableStateOf(false)};val context=LocalContext.current
-        AlertDialog(onDismissRequest={},title={Text("Save your recovery key")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        AlertDialog(properties=androidx.compose.ui.window.DialogProperties(securePolicy=androidx.compose.ui.window.SecureFlagPolicy.SecureOn),onDismissRequest={},title={Text("Save your recovery key")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("Anyone holding this key and the encrypted files can unlock this vault. Do not send it to support, chat or the repository.")
             SelectionContainer{Text(key.chunked(8).joinToString(" "),style=MaterialTheme.typography.bodyLarge)}
             TextButton(onClick={confirmCopy=true}){Text("Copy key…")}
             DriveCheckboxRow("I saved the key outside this app.",saved,{saved=it})
-        }},confirmButton={TextButton(onClick={recoveryKey=null},enabled=saved){Text("I saved it")}})
+        }},confirmButton={TextButton(onClick={ui.launch{bundle.library.saveAccountSecret("pending-recovery:$recoveryId","");recoveryKey=null;recoveryId=""}},enabled=saved){Text("I saved it")}})
         if(confirmCopy)ConfirmDialog("Copy recovery key?","Other software may have access to your clipboard. Prefer a secure password manager or a written copy.","Copy sensitive key",{confirmCopy=false}){
             val clip=ClipData.newPlainText("Vault recovery key",key)
             clip.description.extras=PersistableBundle().apply{putBoolean("android.content.extra.IS_SENSITIVE",true)}

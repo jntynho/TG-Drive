@@ -1,6 +1,6 @@
 # TG Drive
 
-Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.8.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
+Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.9.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
 
 - Multiple uploads, persistent queue, priority, per-file retry/pause, unmetered/charging rules and approximate upload pacing.
 - Nested folders, rename/move, tags, favorites, search/filter, grid/list, trash, content versions and reversible organization rules.
@@ -58,3 +58,5 @@ The 0.6 interface places account management in Settings and search in route head
 The [0.7 update](docs/UI-0.7.md) restores Gallery header search, adds Gallery/Audio sort, fades thumbnails, stabilizes page geometry and adds a transparent media overlay, animated focal-point photo zoom and Compose video controls. Eligible unencrypted single-part files embed creation metadata in their own Telegram message and attach a thumbnail in the same request when supported. **Update all devices to 0.7+ to read these new creation captions.** Earlier files, encrypted vaults and multipart uploads remain readable; Telegram rate limits still apply.
 
 The [0.8 upload pipeline](docs/UPLOAD-0.8.md) overlaps up to two ordinary content uploads while serializing final message publication. It reduces snapshot/staging reads, preserves account cooldowns and per-file pause/retry, and keeps vaults/paced work exclusive. It retains the 0.7 cloud format and adds no runtime dependency. Speed remains network/server dependent.
+
+The [0.9 UI/UX corrections](docs/UI-UX-0.9.ar.md) record the audit fixes, verification evidence and remaining device validation. Existing storage formats and signing identity are preserved.

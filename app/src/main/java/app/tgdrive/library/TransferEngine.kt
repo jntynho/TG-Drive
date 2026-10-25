@@ -118,8 +118,13 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val task = task(id); require(task.state != TaskState.COMPLETED)
         repository.setTask(task.copy(state = TaskState.QUEUED, attempts = 0, nextAttemptAt = 0, error = "")); wake?.invoke()
     }
-    suspend fun cancel(id: String) { pause(id); val current=task(id); repository.setTask(current.copy(state = TaskState.CANCELLED, error = "Cancelled by you.")); OptionalConnections(repository).forget(current) }
-    suspend fun clearFinished() = repository.mutate { db -> db.tasks().filter { it.state in terminal }.forEach { db.remove("tasks", it.id) } }
+    suspend fun cancel(id: String) { pause(id); val current=task(id); repository.setTask(current.copy(state = TaskState.CANCELLED, error = "Cancelled by you.")); OptionalConnections(repository).forget(current);if(current.pendingMessageId==0L)withContext(Dispatchers.IO){File(context.filesDir,"transfer-staging/${current.profileId}/${current.id}").deleteRecursively()} }
+    suspend fun clearFinished() = withContext(Dispatchers.IO){
+        repository.mutate { db -> db.tasks().filter { it.state in terminal && (it.state==TaskState.COMPLETED||it.pendingMessageId==0L) }.forEach {
+            File(context.filesDir,"transfer-staging/${it.profileId}/${it.id}").deleteRecursively()
+            db.remove("tasks", it.id)
+        } }
+    }
     fun task(id: String): TransferTask = repository.db().get("tasks", id)?.model() ?: error("Transfer no longer exists.")
     suspend fun pauseProtected() {
         repository.state.value.tasks.filter { it.vaultId.isNotEmpty() && it.state !in terminal && it.state !in setOf(TaskState.PAUSED,TaskState.FAILED) }.forEach {
@@ -246,6 +251,9 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
             return Uri.fromFile(snapshot) to (spec.preparedHash to spec.preparedSize)
         }
         val uri=Uri.parse(current.source)
+        fun sourceModified():Long = if(uri.scheme=="file")File(uri.path!!).lastModified()else
+            runCatching{androidx.documentfile.provider.DocumentFile.fromSingleUri(context,uri)?.lastModified()?:0}.getOrDefault(0)
+        val modified=sourceModified()
         val expected=if(uri.scheme=="file")File(uri.path!!).length()else context.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()&&!it.isNull(0))it.getLong(0)else -1}?:-1
         val keep=synchronized(snapshotReservations) {
             val needed=expected.coerceAtLeast(0)*2
@@ -266,6 +274,11 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 }
             }?:error("Source permission is unavailable. Select the file again.")}
             val hash=digest.digest().joinToString(""){"%02x".format(it)}
+            require(modified<=0 || sourceModified()==modified){"Source changed during preparation. Retry when editing has finished."}
+            repository.checkAccount(current.accountId)
+            current=task(initial.id);spec=current.payload.model<UploadSpec>()
+            spec=spec.copy(sourceModifiedAt=modified,sourceSize=size)
+            repository.setTask(current.copy(payload=spec.json()))
             if(keep){
                 require(size==expected){"Source changed during preparation."}
                 check(partial.renameTo(snapshot)){"Could not finalize upload snapshot."}

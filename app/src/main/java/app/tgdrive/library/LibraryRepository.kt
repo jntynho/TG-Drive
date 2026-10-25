@@ -22,6 +22,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
     private val initializationRevision = MutableStateFlow(0)
     val state = mutable.asStateFlow()
     val vaults = VaultManager()
+    val thumbnails = ThumbnailLoader(this)
     val sender = TelegramSendCoordinator(persist={until->
         mutate{it.put("settings","sendCooldownUntil",until.toString())}
         mutable.update{it.copy(sendCooldownUntil=until)}
@@ -45,7 +46,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
                     withContext(Dispatchers.IO) {
                         writes.withLock {
                             require(allowAccount(auth.accountId)) { "This Telegram account is already open in another profile. Switch to that profile; sign out of this duplicate profile to use a different account." }
-                            database?.close(); vaults.lock()
+                            thumbnails.clear();database?.close(); vaults.lock()
                             database = LibraryDatabase(context, auth.accountId, rowCodec(auth.accountId))
                             mutable.value = LibraryState(accountId = auth.accountId, accountName = auth.account)
                             deviceId = db().get("settings", "deviceId") ?: newId().also { db().put("settings", "deviceId", it) }
@@ -63,7 +64,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
                         if (state.value.preferences.autoSync) runCatching { sync() }.onFailure { report(it) }
                     }
                 } else if (auth.login == LoginStep.CLOSED || (auth.login != LoginStep.READY && auth.accountId == 0L)) {
-                    if (state.value.accountId != 0L) { vaults.lock(); cache?.clearSensitive(); mutable.value = LibraryState() }
+                    if (state.value.accountId != 0L) { vaults.lock(); thumbnails.clear(); cache?.clearSensitive(); mutable.value = LibraryState() }
                 }
                 } catch (e: Exception) { report(e) }
             }
@@ -144,9 +145,14 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         mutable.update{it.copy(error=null)}
         if(session.state.value.accountId==0L)session.reconnect() else initializationRevision.value++
     }
-    suspend fun createFolder(name: String, parent: String = "", vault: String = ""): String {
-        val f = Folder(name = cleanName(name), parentId = parent)
-        mutate { require(parent.isEmpty() || state.value.folders.any { it.id == parent && it.deletedAt == 0L }) { "Parent folder is unavailable." }; commit(envelope(EntityKind.FOLDER, f.id, f.json(), vault)) }
+    suspend fun createFolder(name: String, parent: String = "", vault: String = "",id:String=newId()): String {
+        val f = Folder(id=id,name = cleanName(name), parentId = parent)
+        mutate { db->
+            require(parent.isEmpty() || state.value.folders.any { it.id == parent && it.deletedAt == 0L }&&db.entity(EntityKind.FOLDER,parent)?.vaultId.orEmpty()==vault) { "Parent folder is unavailable or belongs to another vault." }
+            val existing=db.entity(EntityKind.FOLDER,id)
+            if(existing==null)commit(envelope(EntityKind.FOLDER, f.id, f.json(), vault))
+            else require(existing.vaultId==vault&&vaults.body(existing).model<Folder>()==f){"This folder draft was already saved with different details."}
+        }
         changed?.invoke(); return f.id
     }
     suspend fun updateItem(item: Item) {
@@ -221,7 +227,17 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
     suspend fun setLocal(value: LocalItem) = withContext(Dispatchers.IO) {
         writes.withLock { db().putLocal(value); mutable.update { it.copy(local = it.local + (value.itemId to value)) } }
     }
-    suspend fun updateStorage() = withContext(Dispatchers.IO) { cache?.trim(state.value.preferences.cacheMiB * 1024L * 1024); mutable.update { it.copy(cacheBytes = cache?.bytes() ?: 0, offlineBytes = cache?.let { c -> c.bytes(c.offline) } ?: 0) } }
+    suspend fun updateStorage() = withContext(Dispatchers.IO) {
+        val account=state.value.accountId
+        val storage=cache?:return@withContext
+        storage.trim(state.value.preferences.cacheMiB*1024L*1024)
+        val cached=storage.bytes();val offline=storage.bytes(storage.offline)
+        val sources=listOf("owned-inputs","captures").sumOf{TemporaryFiles.bytes(File(context.filesDir,"$it/${session.profileId}"))}
+        val staging=TemporaryFiles.bytes(File(context.filesDir,"transfer-staging/${session.profileId}"))
+        val exports=TemporaryFiles.bytes(File(context.cacheDir,"exports"))
+        checkAccount(account)
+        mutable.update{it.copy(cacheBytes=cached,offlineBytes=offline,retainedSourceBytes=sources,stagingBytes=staging,exportBytes=exports)}
+    }
     suspend fun setPreferences(value: Preferences) = updatePreferences { value }
     suspend fun updatePreferences(update: (Preferences)->Preferences) {
         val account = state.value.accountId
@@ -240,6 +256,14 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         if(budgetChanged) updateStorage()
     }
     suspend fun setRule(value: BackupRule) = mutate { it.put("rules", value.id, value.json()) }
+    suspend fun updateRule(id:String,transform:(BackupRule)->BackupRule)=mutate{db->val rule=db.get("rules",id)?.model<BackupRule>()?:return@mutate;db.put("rules",id,transform(rule).json())}
+    suspend fun setRuleEnabled(id:String,enabled:Boolean)=mutate{db->val rule=db.get("rules",id)?.model<BackupRule>()?:error("Backup rule was removed.");db.put("rules",id,rule.copy(enabled=enabled).json())}
+    suspend fun reconnectRule(id:String,tree:Uri)=mutate{db->
+        require(androidx.documentfile.provider.DocumentFile.fromTreeUri(context,tree)?.canRead()==true){"This folder is not readable."}
+        val rule=db.get("rules",id)?.model<BackupRule>()?:error("Backup rule was removed.")
+        require(Uri.parse(rule.treeUri).authority==tree.authority&&Uri.parse(rule.treeUri).let{android.provider.DocumentsContract.getTreeDocumentId(it)}==android.provider.DocumentsContract.getTreeDocumentId(tree)){"Choose the original folder to retain its backup receipts."}
+        db.put("rules",id,rule.copy(treeUri=tree.toString(),error="").json())
+    }
     suspend fun removeRule(id: String) = mutate { it.remove("rules", id) }
 
     suspend fun sync(full: Boolean = false, collectImports: Boolean = false) = withContext(Dispatchers.IO) {
@@ -368,10 +392,11 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
     }
     suspend fun maintainCache() {
         if(now()-maintainedAt<30_000 && context.cacheDir.usableSpace>64L*1024*1024)return
-        maintainedAt=now();updateStorage()
+        maintainedAt=now();withContext(Dispatchers.IO){runCatching{TemporaryFiles.prune(this@LibraryRepository)}};updateStorage()
     }
     suspend fun createVault(label: String, password: CharArray): String = withContext(Dispatchers.IO) {
         val (descriptor, recovery) = vaults.create(label, password)
+        saveAccountSecret("pending-recovery:${descriptor.id}",recovery)
         mutate { commit(envelope(EntityKind.VAULT, descriptor.id, descriptor.json())) }
         changed?.invoke(); recovery
     }
@@ -379,7 +404,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         val desc = state.value.vaults.firstOrNull { it.id == id } ?: error("Vault descriptor unavailable. Refresh the index first.")
         vaults.unlock(desc, credential, recovery); mutate { db->db.tasks().filter{it.vaultId==id&&it.state==TaskState.WAITING_FOR_UNLOCK}.forEach{db.putTask(it.copy(state=TaskState.QUEUED,nextAttemptAt=0,error=""))} }; changed?.invoke()
     }
-    suspend fun lockVaults() { vaults.lock(); withContext(Dispatchers.IO) { cache?.clearSensitive(); mutate { } } }
+    suspend fun lockVaults() { vaults.lock(); thumbnails.clear(); withContext(Dispatchers.IO) { cache?.clearSensitive(); mutate { } } }
     suspend fun resolveConflict(id: String, useIncoming: Boolean) {
         mutate { database ->
             val conflict = database.get("conflicts", id)?.model<Conflict>() ?: return@mutate
@@ -428,15 +453,22 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
     }
     suspend fun importMessage(candidate: ImportCandidate, folder: String) {
         require(folder.isEmpty()||db().entity(EntityKind.FOLDER,folder)?.vaultId.orEmpty().isEmpty()) { "Import references into Personal first; encrypting their content requires a protected upload." }
+        if(state.value.versions.any{it.imported&&it.parts.any{part->part.messageId==candidate.messageId}}){notice("This message is already in your library.");return}
         val meta = FileMetadata.create(candidate.name, "")
         val version = Version(itemId = meta.id, size = candidate.size, sha256 = "", parts = listOf(Part(candidate.messageId, 0, candidate.size, candidate.size, "")), imported = true)
         saveUploaded(Item(meta.id, meta.name, folder, candidate.mime, candidate.size, versionId = version.id, createdAt = candidate.date), version, "", "")
         notice("Imported the selected reference. The original message and caption were not modified.")
     }
-    fun offerTrashUndo(ids:List<String>){mutable.update{it.copy(notice="Moved ${ids.size} files to Trash",undoTrashIds=ids)}}
-    fun notice(message: String) { mutable.update { it.copy(notice = message) } }
-    fun report(error: Throwable) { if (error is CancellationException) throw error; mutable.update { it.copy(error = error.message?.take(300) ?: "Operation failed.") } }
-    fun clearNotice() { mutable.update { it.copy(error = null, notice = null, lastShare = null, undoTrashIds=emptyList()) } }
+    fun offerTrashUndo(ids:List<String>){mutable.update{it.copy(messageRevision=it.messageRevision+1,notice="Moved ${ids.size} files to Trash",undoTrashIds=ids)}}
+    fun notice(message: String) { mutable.update { it.copy(messageRevision=it.messageRevision+1,notice = message) } }
+    fun report(error: Throwable) { if (error is CancellationException) throw error; mutable.update { it.copy(messageRevision=it.messageRevision+1,error = error.message?.take(300) ?: "Operation failed.") } }
+    fun clearNotice() { mutable.update { it.copy(error = null, notice = null, undoTrashIds=emptyList()) } }
+    fun acknowledgeNotice(revision:Long,error:String?,notice:String?) { mutable.update {
+        if(it.messageRevision!=revision)return@update it
+        it.copy(error=if(it.error==error)null else it.error,notice=if(it.notice==notice)null else it.notice,
+            undoTrashIds=if(it.notice==notice)emptyList()else it.undoTrashIds)
+    } }
+    fun clearShare() { mutable.update{it.copy(lastShare=null)} }
     fun shareResult(result: ShareResult) { mutable.update { it.copy(lastShare = result) } }
     fun setOrganization(value: List<OrganizationChange>) { mutable.update { it.copy(organization = value) } }
     fun clearImports() { mutable.update { it.copy(incoming = emptyList()) } }

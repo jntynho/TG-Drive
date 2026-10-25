@@ -12,7 +12,8 @@ import androidx.media3.session.MediaSessionService
 import app.tgdrive.library.*
 import kotlinx.coroutines.*
 
-data class NowPlaying(val profile:String,val item:String,val playing:Boolean)
+enum class PlaybackStatus(val label:String){PREPARING("Preparing"),BUFFERING("Buffering"),PLAYING("Now playing"),PAUSED("Paused"),ENDED("Finished"),ERROR("Playback failed")}
+data class NowPlaying(val profile:String,val item:String,val playing:Boolean,val status:PlaybackStatus=if(playing)PlaybackStatus.PLAYING else PlaybackStatus.PAUSED,val playWhenReady:Boolean=playing)
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService:MediaSessionService(){
@@ -30,7 +31,13 @@ class PlaybackService:MediaSessionService(){
             override fun onEvents(player:androidx.media3.common.Player,events:androidx.media3.common.Player.Events){
                 val uri=player.currentMediaItem?.localConfiguration?.uri
                 val path=uri?.pathSegments.orEmpty()
-                playingState.value=if(path.size==3&&player.playbackState!=androidx.media3.common.Player.STATE_IDLE)NowPlaying(path[0],path[1],player.isPlaying)else null
+                val status=when {player.playerError!=null->PlaybackStatus.ERROR
+                    player.playbackState==androidx.media3.common.Player.STATE_BUFFERING->PlaybackStatus.BUFFERING
+                    player.playbackState==androidx.media3.common.Player.STATE_ENDED->PlaybackStatus.ENDED
+                    player.isPlaying->PlaybackStatus.PLAYING
+                    player.playbackState==androidx.media3.common.Player.STATE_IDLE->PlaybackStatus.PREPARING
+                    else->PlaybackStatus.PAUSED}
+                playingState.value=if(path.size==3)NowPlaying(path[0],path[1],player.isPlaying,status,player.playWhenReady)else null
             }
         })
         mediaSession=MediaSession.Builder(this,player).build()
@@ -72,7 +79,7 @@ class PlaybackService:MediaSessionService(){
         val nowPlaying:kotlinx.coroutines.flow.StateFlow<NowPlaying?> = playingState
         fun toggle(context:Context,profile:String,item:String){ContextCompat.getMainExecutor(context).execute{instance?.let{service->
             val parts=service.player.currentMediaItem?.localConfiguration?.uri?.pathSegments
-            if(parts?.getOrNull(0)==profile&&parts.getOrNull(1)==item){if(service.player.isPlaying)service.player.pause()else service.player.play()}
+            if(parts?.getOrNull(0)==profile&&parts.getOrNull(1)==item){if(service.player.playerError!=null){service.player.prepare();service.player.play()}else if(service.player.playbackState==androidx.media3.common.Player.STATE_ENDED){service.player.seekTo(0);service.player.play()}else if(service.player.playWhenReady)service.player.pause()else service.player.play()}
         }}}
         fun dismiss(context:Context,profile:String,item:String){ContextCompat.getMainExecutor(context).execute{instance?.let{service->service.scope.launch{
             service.savePosition()

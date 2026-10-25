@@ -51,12 +51,13 @@ fun now() = System.currentTimeMillis()
     val ruleId: String = "", val allowDuplicate: Boolean = false,
     val speedBytesPerSecond: Long = 0, val priority: Int = 0, val completionNotified:Boolean=false,
 )
-@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0, val embeddedCaption:String="", val preparedSource:Boolean=false, val preparedHash:String="", val preparedSize:Long=0)
+@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0, val embeddedCaption:String="", val preparedSource:Boolean=false, val preparedHash:String="", val preparedSize:Long=0, val sourceModifiedAt:Long=-1, val sourceSize:Long=-1)
 @Serializable data class SourceReceipt(val uri: String, val size: Long, val modifiedAt: Long, val hash: String, val itemId: String, val uploadedAt: Long = now())
 @Serializable data class BackupRule(
     val id: String = newId(), val name: String, val treeUri: String, val folderId: String = "", val vaultId: String = "",
     val enabled: Boolean = true, val since: Long = 0, val recursive: Boolean = true,
     val lastScanAt: Long = 0, val lastSuccessAt: Long = 0, val error: String = "",
+    val lastScanDiscovered:Int=0,val lastScanQueued:Int=0,val lastScanComplete:Boolean=false,
 )
 @Serializable data class Preferences(
     val wifiOnly: Boolean = false, val chargingOnly: Boolean = false, val autoRetry: Boolean = true,
@@ -81,8 +82,9 @@ data class LibraryState(
     val tasks: List<TransferTask> = emptyList(), val rules: List<BackupRule> = emptyList(), val local: Map<String, LocalItem> = emptyMap(),
     val preferences: Preferences = Preferences(), val lockedVaults: Int = 0, val unlockedVaultIds: Set<String> = emptySet(),
     val vaults: List<VaultDescriptor> = emptyList(), val conflicts: List<Conflict> = emptyList(),
+    val messageRevision:Long=0,
     val syncing: Boolean = false, val lastSyncAt: Long = 0, val error: String? = null, val notice: String? = null,
-    val cacheBytes: Long = 0, val offlineBytes: Long = 0, val pendingOperations: Int = 0,
+    val cacheBytes: Long = 0, val offlineBytes: Long = 0, val retainedSourceBytes:Long=0,val stagingBytes:Long=0,val exportBytes:Long=0, val pendingOperations: Int = 0,
     val incoming: List<ImportCandidate> = emptyList(), val organization: List<OrganizationChange> = emptyList(),
     val lastShare: ShareResult? = null,
     val healthProblems: List<String> = emptyList(),

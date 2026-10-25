@@ -19,23 +19,28 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import androidx.compose.ui.semantics.*
 
 /** Direct finger tracking, animated focal-point double tap, and bounded inertial pan. */
-@Composable internal fun GalleryZoomImage(image:Bitmap,modifier:Modifier,onTap:()->Unit,onZoom:(Boolean)->Unit) {
-    var scale by remember(image){mutableFloatStateOf(1f)}
-    var pan by remember(image){mutableStateOf(Offset.Zero)}
+@Composable internal fun GalleryZoomImage(image:Bitmap,modifier:Modifier,onTap:()->Unit,onZoom:(Boolean)->Unit,contentKey:Any=image) {
+    var scale by remember(contentKey){mutableFloatStateOf(1f)}
+    var pan by remember(contentKey){mutableStateOf(Offset.Zero)}
     var viewport by remember{mutableStateOf(IntSize.Zero)}
     val size=IntSize(image.width,image.height)
     val scope=rememberCoroutineScope()
     var motion by remember{mutableStateOf<Job?>(null)}
-    val decay=rememberSplineBasedDecay<Offset>()
+    val decay=rememberSplineBasedDecay<Float>()
     val currentTap by rememberUpdatedState(onTap)
     val currentZoom by rememberUpdatedState(onZoom)
     LaunchedEffect(Unit){snapshotFlow{scale>1.01f}.collect{currentZoom(it)}}
     DisposableEffect(Unit){onDispose{currentZoom(false)}}
     LaunchedEffect(viewport){motion?.cancel();pan=boundImagePan(pan,scale,viewport,size)}
-    Box(modifier.clipToBounds().onSizeChanged{viewport=it}
-        .pointerInput(image,viewport){detectTapGestures(onTap={currentTap()},onDoubleTap={point->
+    Box(modifier.clipToBounds().semantics {
+        customActions=listOf(CustomAccessibilityAction("Zoom in"){motion?.cancel();scale=(scale*1.5f).coerceAtMost(6f);true},
+            CustomAccessibilityAction("Fit image"){motion?.cancel();scale=1f;pan=Offset.Zero;true})
+    }.onSizeChanged{viewport=it}
+        .pointerInput(contentKey,viewport){detectTapGestures(onTap={currentTap()},onDoubleTap={point->
             motion?.cancel()
             val fromScale=scale;val fromPan=pan
             val target=if(scale>1.05f)1f else 2.5f
@@ -46,7 +51,7 @@ import kotlinx.coroutines.launch
                 pan=boundImagePan(fromPan+(toPan-fromPan)*value,scale,viewport,size)
             }}
         })}
-        .pointerInput(image,viewport){awaitEachGesture {
+        .pointerInput(contentKey,viewport){awaitEachGesture {
             awaitFirstDown(requireUnconsumed=false)
             motion?.cancel()
             val tracker=VelocityTracker()
@@ -72,9 +77,16 @@ import kotlinx.coroutines.launch
             if(dragged&&!multi&&scale>1.01f) {
                 val velocity=tracker.calculateVelocity()
                 motion=scope.launch {
-                    AnimationState(typeConverter=Offset.VectorConverter,initialValue=pan,initialVelocityVector=AnimationVector2D(velocity.x,velocity.y)).animateDecay(decay){
-                        val bounded=boundImagePan(value,scale,viewport,size);pan=bounded
-                        if(bounded!=value)cancelAnimation()
+                    coroutineScope {
+                        val start=pan
+                        launch{AnimationState(initialValue=start.x,initialVelocity=velocity.x).animateDecay(decay){
+                            val bounded=boundImagePan(Offset(value,pan.y),scale,viewport,size);pan=bounded
+                            if(bounded.x!=value)cancelAnimation()
+                        }}
+                        launch{AnimationState(initialValue=start.y,initialVelocity=velocity.y).animateDecay(decay){
+                            val bounded=boundImagePan(Offset(pan.x,value),scale,viewport,size);pan=bounded
+                            if(bounded.y!=value)cancelAnimation()
+                        }}
                     }
                 }
             }

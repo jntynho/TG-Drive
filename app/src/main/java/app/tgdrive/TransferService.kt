@@ -18,22 +18,24 @@ class TransferService : Service() {
     private var pending=0
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         val profile=intent?.getStringExtra("profile")?:return START_NOT_STICKY
-        val initial=LibraryWorker.foregroundInfo(this)
-        ServiceCompat.startForeground(this,initial.notificationId,initial.notification,if(android.os.Build.VERSION.SDK_INT>=29)android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
+        val initial=LibraryWorker.foregroundInfo(this,profile)
+        if(pending==0)ServiceCompat.startForeground(this,profileNotificationId(profile),initial.notification,if(android.os.Build.VERSION.SDK_INT>=29)android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
         pending++
         scope.launch {
             try {
                 lanes.withPermit {
                     val b=(application as DriveApp).sessions.bundle(profile)
                     b.library.awaitReady()
+                    val info=LibraryWorker.foregroundInfo(this@TransferService,profile)
+                    ServiceCompat.startForeground(this@TransferService,profileNotificationId(profile),info.notification,if(android.os.Build.VERSION.SDK_INT>=29)android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
                     val observer=launch {
                         b.library.state.collect{state->
                             val current=state.tasks.firstOrNull{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}
                             val title=if(state.preferences.hideNotifications || current?.vaultId?.isNotEmpty()==true)"Processing your saved transfers" else current?.title?:"Syncing your library"
-                            val open=PendingIntent.getActivity(this@TransferService,10,Intent(this@TransferService,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
+                            val open=notificationRoute(this@TransferService,profile,"activity")
                             val notification=NotificationCompat.Builder(this@TransferService,"transfers").setSmallIcon(R.drawable.ic_drive).setContentTitle("TG Drive")
-                                .setContentText(title).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open).build()
-                            getSystemService(android.app.NotificationManager::class.java).notify(10,notification)
+                                .setContentText(title).setSubText("${state.tasks.count{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}} active operations").setGroup("transfers:$profile").setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open).build()
+                            getSystemService(android.app.NotificationManager::class.java).notify(profileNotificationId(profile),notification)
                         }
                     }
                     try {
@@ -41,7 +43,7 @@ class TransferService : Service() {
                             if(intent.action==SCAN)b.backups.scan(intent.getStringExtra("rule"),intent.getBooleanExtra("force",false))
                             b.transfers.drain()
                         }
-                    }finally{observer.cancel()}
+                    }finally{observer.cancel();getSystemService(android.app.NotificationManager::class.java).cancel(profileNotificationId(profile))}
                 }
             }catch(e:Exception){if(e !is CancellationException)(application as DriveApp).sessions.bundle(profile).library.report(e)}
             finally{pending--;if(pending==0){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}

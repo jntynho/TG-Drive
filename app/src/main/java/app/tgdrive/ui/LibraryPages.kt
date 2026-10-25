@@ -43,7 +43,7 @@ internal fun libraryCollection(state: LibraryState, kind: String = "all", query:
 
 @Composable
 fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit,homeQuery:String="",filesQuery:String="",onFilters:((()->Unit)->Unit)={},recentView:Boolean=false,onRecent:()->Unit={},onAdd:()->Unit={},addRequested:Boolean=false,onAddConsumed:()->Unit={},homeSearch:HeaderSearch?=null,filesSearch:HeaderSearch?=null) {
-    var actionId by remember { mutableStateOf("") }
+    var actionId by rememberSaveable { mutableStateOf("") }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     BackHandler(page != "home") { onPage("home") }
     AnimatedContent(page, transitionSpec = { horizontalNavigation(targetState != "home") }, label = "home-detail") { route ->
@@ -72,29 +72,31 @@ fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, 
 internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onOpen: (String) -> Unit,
                          onPreview: (String) -> Unit, onMenu: (String) -> Unit, onUpload: () -> Unit,
                          query:String="",onRecent:()->Unit={onOpen("files")}) {
-    val rows by produceState(emptyList<Item>(),state.items,state.versions,state.itemVaults,state.unlockedVaultIds,query,state.local) {
-        value=withContext(Dispatchers.Default){libraryCollection(state,query=query).let{if(query.isBlank())it.take(6)else it}}
-    }
+    val rows=computedList(state.items,state.versions,state.itemVaults,state.unlockedVaultIds,query,state.local){libraryCollection(state,query=query).let{if(query.isBlank())it.take(6)else it}}
     val allowedIds=remember(state.items,state.itemVaults,state.unlockedVaultIds){state.items.filter{it.deletedAt==0L&&(state.itemVaults[it.id].orEmpty().isEmpty()||state.itemVaults[it.id] in state.unlockedVaultIds)}.mapTo(hashSetOf()){it.id}}
-    val visible=rows.filter{it.id in allowedIds}
+    val visible=rows.orEmpty().filter{it.id in allowedIds}
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         if(query.isBlank()) {
             item{LibraryUsageCard(state,onUpload)}
-            item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                listOf(Triple("All files","files",DriveIcons.Folder),Triple("Activity","activity",DriveIcons.SwapVert),Triple("Backups","backups",DriveIcons.Backup)).forEach { (title,route,icon) ->
-                    DriveCard(onClick={onOpen(route)},modifier=Modifier.weight(1f)) {
-                        Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically) {
+            item {BoxWithConstraints(Modifier.fillMaxWidth()){
+                val links=listOf(Triple("All files","files",DriveIcons.Folder),Triple("Activity","activity",DriveIcons.SwapVert),Triple("Backups","backups",DriveIcons.Backup))
+                if(maxWidth<320.dp||androidx.compose.ui.platform.LocalDensity.current.fontScale>1.3f)Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    links.forEach{(title,route,icon)->ActionRow(title,icon=icon){onOpen(route)}}
+                }else Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    links.forEach{(title,route,icon)->DriveCard(onClick={onOpen(route)},modifier=Modifier.weight(1f)){
+                        Row(Modifier.fillMaxWidth().heightIn(min=64.dp).padding(10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically){
                             Icon(icon,null,Modifier.size(20.dp));Text(title,Modifier.weight(1f),style=MaterialTheme.typography.labelMedium)
                         }
-                    }
+                    }}
                 }
-            } }
+            }}
         }
         item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
             Text(if(query.isBlank())"Recent uploads"else"Search results",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium)
             if(query.isBlank())TextButton(onRecent){Text("See all")}
         } }
-        if(visible.isEmpty())item{InfoCard(if(query.isBlank())"Your library starts here"else"No matching files",if(query.isBlank())"Add files to see them across Home, Gallery and Audio."else"Try another name, tag or word from extracted text.",DriveIcons.Folder)}
+        if(rows==null)item{LinearProgressIndicator(Modifier.fillMaxWidth())}
+        if(rows!=null&&visible.isEmpty())item{InfoCard(if(query.isBlank())"Your library starts here"else"No matching files",if(query.isBlank())"Add files to see them across Home, Gallery and Audio."else"Try another name, tag or word from extracted text.",DriveIcons.Folder)}
         items(visible,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,
             onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
         if(query.isBlank()&&state.rules.none{it.enabled})item{ActionRow("Back up a folder","Choose the folders you want to keep",DriveIcons.Backup){onOpen("backups")}}
@@ -102,35 +104,40 @@ internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onO
 }
 
 @Composable
-fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit,query:String="",selecting:Boolean=false,selected:Set<String> = emptySet(),onSelection:(Set<String>)->Unit={},onSelectMode:()->Unit={},search:HeaderSearch?=null,sort:MediaSort=MediaSort.NEWEST) {
-    var actionId by remember { mutableStateOf("") }
-    var kind by rememberSaveable{mutableStateOf("All")}
-    var move by remember{mutableStateOf(false)}
-    var trash by remember{mutableStateOf(false)}
-    val media by produceState(emptyList<Item>(), state.items, state.versions, state.itemVaults, state.unlockedVaultIds, gallery, query, sort) {
-        value = withContext(Dispatchers.Default) { sortMedia(libraryCollection(state, if(gallery) "gallery" else "audio", query),sort,state.versions) }
+fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit,query:String="",selecting:Boolean=false,selected:Set<String> = emptySet(),onSelection:(Set<String>)->Unit={},onSelectMode:()->Unit={},search:HeaderSearch?=null,sort:MediaSort=MediaSort.NEWEST,kind:String="All",onKind:(String)->Unit={}) {
+    var actionId by rememberSaveable { mutableStateOf("") }
+    val selectionScope=listOf(query,kind)
+    var savedSelectionScope by rememberSaveable{mutableStateOf(selectionScope)}
+    LaunchedEffect(selectionScope){if(savedSelectionScope!=selectionScope){onSelection(emptySet());savedSelectionScope=selectionScope}}
+    var move by rememberSaveable{mutableStateOf(false)}
+    var trash by rememberSaveable{mutableStateOf(false)}
+    val media = computedList(state.items, state.versions, state.local, state.itemVaults, state.unlockedVaultIds, gallery, query, sort) {
+        sortMedia(libraryCollection(state, if(gallery) "gallery" else "audio", query),sort,state.versions)
     }
     val visibleIds = state.items.filter { it.deletedAt==0L && (state.itemVaults[it.id].orEmpty().isEmpty() || state.itemVaults[it.id] in state.unlockedVaultIds) }.map{it.id}.toSet()
-    val shown=media.filter{it.id in visibleIds&&(!gallery||kind=="All"||kind=="Photos"&&it.mime.startsWith("image/")||kind=="Videos"&&it.mime.startsWith("video/"))}
+    val safeSelected=if(savedSelectionScope==selectionScope)selected.intersect(visibleIds)else emptySet()
+    val shown=media.orEmpty().filter{it.id in visibleIds&&(!gallery||kind=="All"||kind=="Photos"&&it.mime.startsWith("image/")||kind=="Videos"&&it.mime.startsWith("video/"))}
     Column(Modifier.fillMaxSize()) {
         search?.let{HeaderSearchField(it)}
         if(gallery&&!selecting)Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{kind=label},label={Text(label)})}
+            listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{onKind(label)},label={Text(label)})}
         }
-        if(!gallery||selecting)Text(if(selecting)"${selected.size} selected"else"${shown.size} audio files",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        LaunchedEffect(visibleIds){onSelection(selected.intersect(visibleIds))}
-        Box(Modifier.weight(1f)) {MediaContent(shown,gallery,bundle,{id->if(selecting)onSelection(if(id in selected)selected-id else selected+id)else onPreview(id)},{actionId=it},state=state,selected=selected,selecting=selecting,onLongSelect={id->onSelectMode();onSelection(selected+id)},groupDates=sort==MediaSort.NEWEST||sort==MediaSort.OLDEST)}
+        if(!gallery||selecting)Text(if(selecting)"${safeSelected.size} selected"else"${shown.size} audio files",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        val shownIds=shown.mapTo(hashSetOf()){it.id}
+        LaunchedEffect(shownIds,media!=null){if(media!=null)onSelection(safeSelected.intersect(shownIds))}
+        Box(Modifier.weight(1f)) {if(media==null)CircularProgressIndicator(Modifier.align(Alignment.Center))else MediaContent(shown,gallery,bundle,{id->if(selecting)onSelection(if(id in safeSelected)safeSelected-id else safeSelected+id)else onPreview(id)},{actionId=it},state=state,selected=safeSelected,selecting=selecting,onLongSelect={id->onSelectMode();onSelection(safeSelected+id)},groupDates=sort==MediaSort.NEWEST||sort==MediaSort.OLDEST,searching=query.isNotBlank())}
         if(gallery&&selecting) {
             androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 TextButton({onSelection(shown.map{it.id}.toSet())}){Text("Select all")}
-                TextButton({system.exportZip(selected.toList())},enabled=selected.isNotEmpty()){Text("Save ZIP")}
-                TextButton({move=true},enabled=selected.isNotEmpty()&&selected.map{state.itemVaults[it].orEmpty()}.distinct().size==1){Text("Move")}
-                TextButton({trash=true},enabled=selected.isNotEmpty()){Text("Trash (${selected.size})")}
+                TextButton({system.exportZip(safeSelected.toList())},enabled=safeSelected.isNotEmpty()){Text("Save ZIP")}
+                TextButton({move=true},enabled=safeSelected.isNotEmpty()&&safeSelected.map{state.itemVaults[it].orEmpty()}.distinct().size==1){Text("Move")}
+                TextButton({trash=true},enabled=safeSelected.isNotEmpty()){Text("Trash (${safeSelected.size})")}
             }
         }
     }
-    if(move)FolderPicker(state,"",{move=false},allowedVault=selected.firstOrNull()?.let{state.itemVaults[it].orEmpty()}){target->val ids=selected.toList();bundle.actions.run{bundle.actions.move(ids,target);onSelection(emptySet())};move=false}
-    if(trash)ConfirmDialog("Move ${selected.size} files to Trash?","You can restore them from Trash.","Move to Trash",{trash=false}){val ids=selected.toList();bundle.actions.run{bundle.actions.trash(ids);onSelection(emptySet())};trash=false}
+    val form=rememberFormAction()
+    if(move)FolderPicker(state,"",{move=false},allowedVault=safeSelected.firstOrNull()?.let{state.itemVaults[it].orEmpty()},busy=form.busy,error=form.error){target->val ids=safeSelected.toList();form.run({onSelection(emptySet());move=false}){bundle.actions.move(ids,target)}}
+    if(trash)ConfirmDialog("Move ${safeSelected.size} files to Trash?","You can restore them from Trash.","Move to Trash",{trash=false},busy=form.busy,error=form.error){val ids=safeSelected.toList();form.run({onSelection(emptySet());trash=false}){bundle.actions.trash(ids)}}
     state.items.firstOrNull { it.id == actionId }?.let { item ->
         FileActionsSheet(item,state,bundle,system,onDismiss={actionId=""},onPreview={actionId="";onPreview(item.id)})
     }
@@ -138,9 +145,9 @@ fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions,
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit,state:LibraryState=LibraryState(),selected:Set<String> = emptySet(),selecting:Boolean=false,onLongSelect:(String)->Unit={},groupDates:Boolean=true) {
+internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit,state:LibraryState=LibraryState(),selected:Set<String> = emptySet(),selecting:Boolean=false,onLongSelect:(String)->Unit={},groupDates:Boolean=true,searching:Boolean=false) {
     if(items.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp),contentAlignment=Alignment.Center) {
-        InfoCard(if(gallery) "No photos or videos" else "No audio files", if(gallery)"Add photos and videos from Home to see them here."else"Add audio from Home, or try another search.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
+        InfoCard(if(searching)"No matching files"else if(gallery) "No photos or videos" else "No audio files", if(searching)"Try another name, tag or word from extracted text."else if(gallery)"Add photos and videos from Home to see them here."else"Add audio from Home to see it here.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
     } else if(gallery) LazyVerticalGrid(GridCells.Adaptive(100.dp),Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp),
         horizontalArrangement=Arrangement.spacedBy(2.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
         val dates=state.versions.associate{it.id to it.createdAt}

@@ -69,6 +69,35 @@ class DriveDesignTest {
         }
     }
 
+    @Test fun settingsSearchFindsTheActualOptionAndItsSection() {
+        var opened=""
+        render{SettingsHome(LibraryState(),"Unmetered"){opened=it}}
+        compose.onNodeWithText("Unmetered network only").assertIsDisplayed().performClick()
+        assertEquals("transfers#Unmetered network only",opened)
+        compose.onNodeWithText("No matching settings").assertDoesNotExist()
+    }
+    @Test fun pendingCollectionNeverPaintsResultsFromThePreviousPrivacyScope() {
+        var locked by mutableStateOf(false)
+        val gate=java.util.concurrent.CountDownLatch(1)
+        try{
+            render{
+                val current=locked
+                val rows=computedList(current){if(current){gate.await(4,java.util.concurrent.TimeUnit.SECONDS);emptyList()}else listOf("Private file")}
+                Column{rows?.forEach{Text(it)};if(rows==null)Text("Updating")}
+            }
+            compose.waitUntil(5000){compose.onAllNodesWithText("Private file").fetchSemanticsNodes().isNotEmpty()}
+            compose.runOnIdle{locked=true}
+            compose.onNodeWithText("Private file").assertDoesNotExist()
+            compose.onNodeWithText("Updating").assertIsDisplayed()
+        }finally{gate.countDown()}
+    }
+    @Test fun codeSignInExposesRecoveryButHonorsTheServerWait() {
+        var changed=false
+        render{AuthPanel(DriveState(login=LoginStep.CODE,canResend=true,resendAt=System.currentTimeMillis()+160_000),{_,_->},{},{},{},changePhone={changed=true})}
+        compose.onNode(hasText("Request another code in",substring=true)).performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("Change phone number").performScrollTo().performClick()
+        assertTrue(changed)
+    }
     @Test fun switchRowHasOneLabelledToggleAndRetainsState() {
         render { Column {
             DrivePageHeader("Vaults and privacy", {})

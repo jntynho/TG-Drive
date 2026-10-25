@@ -28,27 +28,38 @@ internal fun LibraryUsageCard(state:LibraryState,onAdd:()->Unit) {
     val track=MaterialTheme.colorScheme.outlineVariant
     DriveCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(18.dp)) {
-                Box(Modifier.size(84.dp),contentAlignment=Alignment.Center) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        val width=8.dp.toPx()
-                        drawArc(track,0f,360f,false,style=Stroke(width))
-                        var start=-90f
-                        if(usage.bytes>0)usage.groups.forEachIndexed{index,bytes->val sweep=bytes.toFloat()/usage.bytes*360f;if(sweep>0)drawArc(colors[index],start,(sweep-3).coerceAtLeast(0f),false,style=Stroke(width));start+=sweep}
+            BoxWithConstraints(Modifier.fillMaxWidth()){
+                val compact=maxWidth<320.dp||androidx.compose.ui.platform.LocalDensity.current.fontScale>1.3f
+                val ring: @Composable ()->Unit = {
+                    Box(Modifier.size(84.dp),contentAlignment=Alignment.Center){
+                        Canvas(Modifier.fillMaxSize()){
+                            val width=8.dp.toPx();drawArc(track,0f,360f,false,style=Stroke(width));var start=-90f
+                            if(usage.bytes>0)usage.groups.forEachIndexed{index,bytes->val sweep=bytes.toFloat()/usage.bytes*360f;if(sweep>0)drawArc(colors[index],start,(sweep-3).coerceAtLeast(0f),false,style=Stroke(width));start+=sweep}
+                        };Icon(DriveIcons.CloudQueue,null,Modifier.size(30.dp))
                     }
-                    Icon(DriveIcons.CloudQueue,null,Modifier.size(30.dp))
                 }
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                val summary: @Composable ()->Unit = {Column(verticalArrangement=Arrangement.spacedBy(4.dp)){
                     Text("Library storage",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(formatBytes(usage.bytes),style=MaterialTheme.typography.headlineMedium)
                     Text("${usage.count} files · active versions",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }}
+                if(compact)Column(verticalArrangement=Arrangement.spacedBy(16.dp)){
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){ring();Spacer(Modifier.weight(1f));IconButton({details=true}){Icon(DriveIcons.Info,"About library storage")}}
+                    summary()
+                }else Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(18.dp)){
+                    ring();Box(Modifier.weight(1f)){summary()};IconButton({details=true}){Icon(DriveIcons.Info,"About library storage")}
                 }
-                IconButton({details=true},Modifier.size(48.dp)){Icon(DriveIcons.Info,"About library storage")}
             }
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)){Text("Offline copies",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(formatBytes(state.offlineBytes),style=MaterialTheme.typography.titleSmall)}
-                DriveButton(onAdd){Icon(DriveIcons.Add,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Add files")}
+            BoxWithConstraints(Modifier.fillMaxWidth()){
+                if(maxWidth<320.dp||androidx.compose.ui.platform.LocalDensity.current.fontScale>1.3f)Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+                    Text("Offline copies: ${formatBytes(state.offlineBytes)}",style=MaterialTheme.typography.bodyMedium)
+                    DriveButton(onAdd,Modifier.fillMaxWidth()){Icon(DriveIcons.Add,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Add files")}
+                }else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){Text("Offline copies",style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(formatBytes(state.offlineBytes),style=MaterialTheme.typography.titleSmall)}
+                    DriveButton(onAdd){Icon(DriveIcons.Add,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Add files")}
+                }
             }
+
             if(state.lockedVaults>0)Text("${state.lockedVaults} locked files are hidden",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

@@ -39,6 +39,7 @@ data class DriveState(
     val network: TelegramNetwork = TelegramNetwork.UNKNOWN,
     val accountId: Long = 0,
     val avatarFileId: Int = 0,
+    val resendAt:Long=0,val canResend:Boolean=false,
 )
 
 class TelegramDrive internal constructor(
@@ -240,7 +241,7 @@ class TelegramDrive internal constructor(
                 return
             }
             is TdApi.AuthorizationStateWaitPhoneNumber -> LoginStep.PHONE
-            is TdApi.AuthorizationStateWaitCode -> LoginStep.CODE
+            is TdApi.AuthorizationStateWaitCode -> {mutable.update{it.copy(resendAt=System.currentTimeMillis()+auth.codeInfo.timeout.coerceAtLeast(0)*1000L,canResend=auth.codeInfo.nextType!=null)};LoginStep.CODE}
             is TdApi.AuthorizationStateWaitPassword -> LoginStep.PASSWORD
             is TdApi.AuthorizationStateWaitOtherDeviceConfirmation -> {
                 mutable.update { it.copy(confirmationLink = auth.link) }; LoginStep.OTHER_DEVICE
@@ -271,6 +272,12 @@ class TelegramDrive internal constructor(
         })
     }
 
+    suspend fun closeInactiveProfile(){require(state.value.login!=LoginStep.READY){"Sign out before removing this profile."};if(client!=null)request(TdApi.Close())}
+    fun changePhoneNumber(){if(state.value.login==LoginStep.CODE&&!state.value.busy)mutable.update{it.copy(login=LoginStep.PHONE,authError=null)}}
+    fun resendCode()=action{
+        require(state.value.login==LoginStep.CODE&&state.value.canResend&&System.currentTimeMillis()>=state.value.resendAt){"Wait for Telegram to allow another code."}
+        request(TdApi.ResendAuthenticationCode(null))
+    }
     fun reconnect() {
         if (state.value.busy) return
         if (client == null) {

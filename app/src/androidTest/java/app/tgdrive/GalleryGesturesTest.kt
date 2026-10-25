@@ -26,6 +26,17 @@ class GalleryGesturesTest {
         compose.onNodeWithContentDescription("Image preview").performTouchInput{doubleClick()}
         compose.waitForIdle();compose.runOnIdle{assertFalse(zoomed)}
     }
+    @Test fun progressivePhotoDecodeRetainsZoomAndExposesAccessibleFitAction() {
+        var bitmap by mutableStateOf(Bitmap.createBitmap(200,400,Bitmap.Config.ARGB_8888))
+        var zoomed=false
+        compose.setContent{DriveTheme{Surface(Modifier.fillMaxSize()){GalleryZoomImage(bitmap,Modifier.fillMaxSize(),{}, {zoomed=it},contentKey="same-original")}}}
+        compose.onNodeWithContentDescription("Image preview").performTouchInput{doubleClick()}
+        compose.waitForIdle();compose.runOnIdle{assertTrue(zoomed);bitmap=Bitmap.createBitmap(400,800,Bitmap.Config.ARGB_8888)}
+        compose.waitForIdle();compose.runOnIdle{assertTrue(zoomed)}
+        val semantics=compose.onNode(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.CustomActions)).fetchSemanticsNode()
+        compose.runOnIdle{assertTrue(semantics.config[androidx.compose.ui.semantics.SemanticsActions.CustomActions].first{it.label=="Fit image"}.action())}
+        compose.waitForIdle();compose.runOnIdle{assertFalse(zoomed)}
+    }
     @Test fun sortPopupSelectsAndDismissesWithoutChangingSearch() {
         var selected=MediaSort.NEWEST
         compose.setContent{DriveTheme{var query by remember{mutableStateOf("Piano")};androidx.compose.foundation.layout.Column{

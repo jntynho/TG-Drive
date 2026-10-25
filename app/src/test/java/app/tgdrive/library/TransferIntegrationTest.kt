@@ -418,6 +418,80 @@ class TransferIntegrationTest {
         repo.state.value.tasks.forEach{engine.retry(it.id)};engine.drain(20_000)
         assertEquals(2,repo.state.value.items.size);assertEquals(2,wire.sendCalls)
     }
+    @Test fun backupReceiptAcknowledgesOnlyTheRevisionActuallyUploaded()=runBlocking {
+        open()
+        val file=File(context.cacheDir,"audited-source.bin").apply{writeBytes(ByteArray(128){1});setLastModified(System.currentTimeMillis()-60_000)}
+        val provider=AuditDocumentsProvider(file)
+        provider.attachInfo(context,android.content.pm.ProviderInfo().apply{authority="audit.documents"})
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal("audit.documents",provider)
+        val uri=Uri.parse("content://audit.documents/document/source")
+        repo.setRule(BackupRule(id="audit-rule",name="Audit backup",treeUri="content://audit.documents/tree/root"))
+        val backups=BackupManager(repo,engine);engine.completed={backups.onCompleted(it)}
+        wire.holdUploads=true
+        engine.enqueueUpload(listOf(uri),ruleId="audit-rule")
+        val running=launch{engine.drain(20_000)}
+        withTimeout(5_000){while(wire.inFlightUploads.isEmpty())delay(10)}
+        file.writeBytes(ByteArray(128){2});file.setLastModified(System.currentTimeMillis()+5_000)
+        wire.holdUploads=false;wire.readyUploads.addAll(wire.inFlightUploads)
+        running.join()
+        val receipt=repo.db().get("sources",BackupManager.sourceKey(uri.toString()))!!.model<SourceReceipt>()
+        assertEquals(TaskState.COMPLETED,repo.state.value.tasks.single().state)
+        assertEquals(file.length(),receipt.size)
+        assertNotEquals(file.lastModified(),receipt.modifiedAt)
+        assertNotEquals(file.sha256(),receipt.hash)
+        // The next scan must not skip the edited revision, even when its byte count is unchanged.
+        assertFalse(receipt.size==file.length()&&receipt.modifiedAt==file.lastModified())
+    }
+    private class AuditDocumentsProvider(val source:File):android.content.ContentProvider() {
+        override fun onCreate()=true
+        override fun getType(uri:Uri)="application/octet-stream"
+        override fun query(uri:Uri,projection:Array<out String>?,selection:String?,selectionArgs:Array<out String>?,sortOrder:String?):android.database.Cursor {
+            val columns=projection?:arrayOf("_display_name","_size","last_modified","mime_type","document_id")
+            return android.database.MatrixCursor(columns).apply{addRow(columns.map{column->when(column){"_display_name"->source.name;"_size"->source.length();"last_modified"->source.lastModified();"mime_type"->"application/octet-stream";"document_id"->"source";else->null}})}
+        }
+        override fun openFile(uri:Uri,mode:String)=android.os.ParcelFileDescriptor.open(source,android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+        override fun insert(uri:Uri,values:android.content.ContentValues?):Uri?=null
+        override fun update(uri:Uri,values:android.content.ContentValues?,selection:String?,selectionArgs:Array<out String>?)=0
+        override fun delete(uri:Uri,selection:String?,selectionArgs:Array<out String>?)=0
+    }
+    @Test fun recoveryKeyRemainsAvailableUntilExplicitAcknowledgement()=runBlocking {
+        open();val key=repo.createVault("Personal vault","a long test password".toCharArray())
+        val vault=repo.state.value.vaults.single()
+        assertEquals(key,repo.accountSecret("pending-recovery:${vault.id}"))
+        repo.lockVaults()
+        assertEquals(key,repo.accountSecret("pending-recovery:${vault.id}"))
+        assertTrue(repo.db().entities().none{it.body.contains(key)})
+        repo.saveAccountSecret("pending-recovery:${vault.id}","")
+        assertEquals("",repo.accountSecret("pending-recovery:${vault.id}"))
+    }
+    @Test fun acknowledgementCannotDismissANewerIdenticalNoticeOrPublicLink()=runBlocking {
+        open();repo.notice("Saved");val displayed=repo.state.value
+        repo.shareResult(ShareResult("link","https://example.invalid/link",123))
+        repo.notice("Saved")
+        repo.acknowledgeNotice(displayed.messageRevision,displayed.error,displayed.notice)
+        assertEquals("Saved",repo.state.value.notice)
+        assertNotNull(repo.state.value.lastShare)
+        val latest=repo.state.value;repo.acknowledgeNotice(latest.messageRevision,latest.error,latest.notice)
+        assertNull(repo.state.value.notice);assertNotNull(repo.state.value.lastShare)
+    }
+    @Test fun scanUpdatesCannotOverwriteANewRuleToggle()=runBlocking {
+        open();val rule=BackupRule(name="Folder",treeUri="content://test/tree/root")
+        repo.setRule(rule);repo.setRuleEnabled(rule.id,false)
+        repo.updateRule(rule.id){it.copy(lastScanAt=123,error="Folder permission unavailable")}
+        assertFalse(repo.state.value.rules.single().enabled)
+        assertEquals(123L,repo.state.value.rules.single().lastScanAt)
+        repo.setRuleEnabled(rule.id,true)
+        assertEquals("Folder permission unavailable",repo.state.value.rules.single().error)
+    }
+    @Test fun restoredFolderDraftDoesNotCreateTwoFolders()=runBlocking {
+        open();repo.createFolder("Documents",id="same-draft");repo.createFolder("Documents",id="same-draft")
+        assertEquals(1,repo.state.value.folders.size)
+    }
+    @Test fun importingTheSameMessageTwiceDoesNotCreateDuplicateRows()=runBlocking {
+        open();val candidate=ImportCandidate(123,"existing.txt","text/plain",25,1000)
+        repo.importMessage(candidate,"");repo.importMessage(candidate,"")
+        assertEquals(1,repo.state.value.items.size)
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]

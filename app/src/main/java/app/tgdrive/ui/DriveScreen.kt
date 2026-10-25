@@ -161,7 +161,7 @@ fun DriveScreen(
 }
 
 @Composable
-fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier = Modifier) {
+fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier = Modifier,changePhone:()->Unit={},resendCode:()->Unit={}) {
     var apiId by remember { mutableStateOf("") }
     var apiHash by remember { mutableStateOf("") }
     val uri = LocalUriHandler.current
@@ -193,6 +193,11 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                             keyboardOptions = KeyboardOptions(keyboardType = when(step) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
                         DriveButton(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if(step==LoginStep.CODE){
+                            val remaining by produceState(0L,state.resendAt){while(true){this.value=((state.resendAt-System.currentTimeMillis()+999)/1000).coerceAtLeast(0);if(this.value==0L)break;kotlinx.coroutines.delay(1000)}}
+                            TextButton(changePhone,enabled=!state.busy){Text("Change phone number")}
+                            if(state.canResend)TextButton(resendCode,enabled=!state.busy&&remaining==0L){Text(if(remaining>0)"Request another code in ${remaining}s"else"Request another code")}
+                        }
                         if (step == LoginStep.PHONE) TextButton(onClick = editCredentials, enabled = !state.busy) { Text(stringResource(R.string.edit_api)) }
                     }
                     LoginStep.CLOSED -> {
@@ -207,7 +212,8 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                     }
                     LoginStep.OTHER_DEVICE -> {
                         Text(stringResource(R.string.confirm_other_device))
-                        Text(state.confirmationLink, style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick={runCatching{uri.openUri(state.confirmationLink)}},enabled=state.confirmationLink.startsWith("tg://")||state.confirmationLink.startsWith("https://")){Text("Open Telegram confirmation")}
+                        androidx.compose.foundation.text.selection.SelectionContainer{Text(state.confirmationLink, style = MaterialTheme.typography.bodySmall)}
                     }
                     LoginStep.UNSUPPORTED -> Text(stringResource(R.string.unsupported_auth))
                     else -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(stringResource(R.string.connecting)) }

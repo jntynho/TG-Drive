@@ -18,7 +18,7 @@ class NativeFileCardTest {
     @Test fun nativeGridCardOpensAndKeepsActionsSeparate() {
         var opened=false;var menu=false
         compose.setContent { DriveTheme { NativeFileCard(Item(name="receipt.pdf",mime="application/pdf"),null,false,false,true,onClick={opened=true},onLongClick={},onMenu={menu=true}) } }
-        compose.onNodeWithContentDescription("File actions").performClick()
+        compose.onNodeWithContentDescription("Actions for receipt.pdf").performClick()
         assertTrue(menu);assertFalse(opened)
         compose.onNodeWithText("receipt.pdf").performClick()
         assertTrue(opened)

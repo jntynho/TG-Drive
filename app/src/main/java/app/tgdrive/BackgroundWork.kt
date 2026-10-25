@@ -20,7 +20,7 @@ class LibraryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             withTimeout(8 * 60 * 1000L) {
                 if (inputData.getBoolean("scan", false)) { bundle.backups.scan(); bundle.backups.purgeExpiredTrash() }
                 val pending = bundle.library.state.value.tasks.any { it.state in setOf(app.tgdrive.library.TaskState.QUEUED, app.tgdrive.library.TaskState.RETRY_WAIT) }
-                if (pending) setForeground(foregroundInfo(applicationContext))
+                if (pending) setForeground(foregroundInfo(applicationContext,profile))
                 bundle.transfers.drain(7 * 60 * 1000L)
             }
             notifyFailures(bundle)
@@ -31,21 +31,21 @@ class LibraryWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     private fun notifyFailures(bundle: SessionBundle) {
         val state = bundle.library.state.value
         if (!state.preferences.backupNotifications || state.rules.isEmpty()) return
-        val failed = state.tasks.count { it.state == app.tgdrive.library.TaskState.FAILED }
+        val failed = state.tasks.count { it.ruleId.isNotEmpty() && it.state == app.tgdrive.library.TaskState.FAILED }
         if (failed == 0 && state.rules.none { it.error.isNotEmpty() }) return
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("backup-health", "Backup health", NotificationManager.IMPORTANCE_DEFAULT))
-        val pending = PendingIntent.getActivity(applicationContext, 20, Intent(applicationContext,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
+        val pending = notificationRoute(applicationContext,bundle.profile.id,"backups")
         val notification = NotificationCompat.Builder(applicationContext,"backup-health").setSmallIcon(R.drawable.ic_drive).setContentTitle("TG Drive backup needs attention")
             .setContentText("Open the app to inspect incomplete work. No files were automatically marked safe.").setContentIntent(pending).setAutoCancel(true).build()
-        runCatching { manager.notify(20,notification) }
+        runCatching { manager.notify("backup:${bundle.profile.id}",20,notification) }
     }
     companion object {
-        fun foregroundInfo(context: Context): ForegroundInfo {
+        fun foregroundInfo(context: Context,profile:String="legacy"): ForegroundInfo {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("transfers", "File transfers", NotificationManager.IMPORTANCE_LOW))
             val notification = NotificationCompat.Builder(context,"transfers").setSmallIcon(R.drawable.ic_drive).setContentTitle("TG Drive")
-                .setContentText("Processing saved transfers").setOngoing(true).build()
-            return if(android.os.Build.VERSION.SDK_INT>=29)ForegroundInfo(10,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(10,notification)
+                .setContentText("Processing saved transfers").setContentIntent(notificationRoute(context,profile,"activity")).setGroup("transfers:$profile").setOngoing(true).build()
+            return if(android.os.Build.VERSION.SDK_INT>=29)ForegroundInfo(2_000_000+profileNotificationId(profile),notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(2_000_000+profileNotificationId(profile),notification)
         }
     }
 }

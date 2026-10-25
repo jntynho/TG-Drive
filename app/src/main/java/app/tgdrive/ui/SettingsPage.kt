@@ -16,13 +16,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.relocation.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import app.tgdrive.*
 import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 
 @Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit,onAccounts:()->Unit={},query:String="",search:HeaderSearch?=null){
-    var confirmCache by remember{mutableStateOf(false)}
+    var confirmCache by rememberSaveable{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
     BackHandler { if(page!="home")onPage(settingsParent(page)) else onClose() }
     val editor = remember(bundle, state.accountId) { PreferenceEditor(state.preferences, bundle.library.scope,
@@ -35,13 +37,18 @@ import app.tgdrive.library.*
         }, report={bundle.library.report(it)}) }
     LaunchedEffect(state.preferences) { editor.observe(state.preferences) }
     fun prefs(update:(Preferences)->Preferences) { editor.update(update) }
-    AnimatedContent(page,transitionSpec={horizontalNavigation(initialState=="home"||(targetState=="vaults"&&initialState=="privacy"))},label="settings-detail"){current->
+    AnimatedContent(page,transitionSpec={horizontalNavigation(initialState=="home"||(targetState=="vaults"&&initialState=="privacy"))},label="settings-detail"){destination->
+        val current=destination.substringBefore("#");val focus=destination.substringAfter("#","")
+        val listState=rememberLazyListState()
+        val indices=when(current){"transfers"->mapOf("Average upload pace" to 1,"Part size" to 3,"Background scan interval" to 5);"storage"->mapOf("Cache budget" to 2,"Free verified local originals" to 4,"Trash retention" to 5);"index"->mapOf("Export library information" to 1,"Import library information" to 2);"privacy"->mapOf("App lock" to 1,"Hide notification details" to 2,"Protect screenshots and recents" to 2,"Backup health notifications" to 2);else->emptyMap()}
+        LaunchedEffect(destination){if(focus.isNotEmpty()){delay(320);listState.animateScrollToItem(indices[focus]?:0)}}
+        CompositionLocalProvider(LocalSettingFocus provides focus){
         Column(Modifier.fillMaxSize()){
 
             when(current){
                 "home"->{search?.let{HeaderSearchField(it)};SettingsHome(state,query){destination->if(destination=="accounts")onAccounts()else onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}}
                 "vaults"->VaultsPage(state,bundle)
-                else->LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                else->LazyColumn(Modifier.fillMaxSize(),state=listState,contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     when(current){
                         "transfers"->{
                             item{DriveGroup{
@@ -62,7 +69,7 @@ import app.tgdrive.library.*
                             item{Text("Background scan interval",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(1,6,12,24)){h->DriveFilterChip(editor.value.scanIntervalHours==h,{prefs{it.copy(scanIntervalHours=h)}},label={Text("${h}h")})}}}
                         }
                         "storage"->{
-                            item{InfoCard("App cache: ${formatBytes(state.cacheBytes)}","Offline copies: ${formatBytes(state.offlineBytes)}. Pending upload sources are kept separately and are not removed by cache cleaning.",DriveIcons.Storage)}
+                            item{InfoCard("App cache: ${formatBytes(state.cacheBytes)}","Offline copies: ${formatBytes(state.offlineBytes)}. Retained source copies: ${formatBytes(state.retainedSourceBytes)}. Upload preparation: ${formatBytes(state.stagingBytes)}. Shared copies: ${formatBytes(state.exportBytes)}. Referenced sources are preserved; unused temporary and shared copies expire after one day.",DriveIcons.Storage)}
                             item{DriveButton(onClick={confirmCache=true}){Text("Clear unpinned app cache")}}
                             item{Text("Cache budget",style=MaterialTheme.typography.titleMedium);LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf(128,256,512,1024)){m->DriveFilterChip(editor.value.cacheMiB==m,{prefs{it.copy(cacheMiB=m)}},label={Text("$m MiB")})}}}
                             item{ActionRow("Inspect Telegram native cache","Separate from the app's verified offline copies",DriveIcons.Folder){bundle.actions.run{
@@ -75,16 +82,16 @@ import app.tgdrive.library.*
                         }
                         "index"->{
                             item{DriveGroup{
-                                ActionRow("Sync latest metadata",icon=DriveIcons.Sync){bundle.actions.run{bundle.library.sync()}}
+                                ActionRow("Sync library",icon=DriveIcons.Sync){bundle.actions.run{bundle.library.sync()}}
                                 DriveDivider()
-                                ActionRow("Full metadata reconciliation","Does not erase the existing local library",DriveIcons.ManageSearch){bundle.actions.run{bundle.library.sync(full=true)}}
+                                ActionRow("Refresh entire library","Does not erase the existing local library",DriveIcons.ManageSearch){bundle.actions.run{bundle.library.sync(full=true)}}
                                 DriveDivider()
-                                ActionRow("Save cloud index checkpoint","Includes folders, tags, versions and encrypted vault descriptors",DriveIcons.CloudUpload){bundle.actions.run{bundle.library.saveCloudIndex()}}
+                                ActionRow("Back up library information","Includes folders, tags, versions and encrypted vault descriptors",DriveIcons.CloudUpload){bundle.actions.run{bundle.library.saveCloudIndex()}}
                                 DriveDivider()
-                                ActionRow("Restore newest cloud checkpoint","Merge and preserve conflicts; never reset login",DriveIcons.Restore){bundle.actions.run{bundle.library.restoreCloudIndex()}}
+                                ActionRow("Restore library information","Merge and preserve conflicts; never reset login",DriveIcons.Restore){bundle.actions.run{bundle.library.restoreCloudIndex()}}
                             }}
-                            item{ActionRow("Export index to a file","No Telegram sessions or device-only source URIs",DriveIcons.SaveAlt,onClick=system.exportIndex)}
-                            item{ActionRow("Import index file","Only a matching Telegram account is accepted",DriveIcons.FileOpen,onClick=system.importIndex)}
+                            item{ActionRow("Export library information","No Telegram sessions or device-only source URIs",DriveIcons.SaveAlt,onClick=system.exportIndex)}
+                            item{ActionRow("Import library information","Only a matching Telegram account is accepted",DriveIcons.FileOpen,onClick=system.importIndex)}
                             item{InfoCard("Metadata is not file content","An index backup cannot recreate deleted Telegram documents. Public metadata names remain readable in an exported index; vault bodies remain encrypted and require your separate recovery credentials.")}
                         }
                         "privacy"->{
@@ -103,7 +110,7 @@ import app.tgdrive.library.*
                             item{DriveGroup{
                                 ActionRow("Check message availability","Does not delete records for a temporary network failure",DriveIcons.FactCheck){bundle.actions.run{bundle.actions.checkAvailability()}}
                                 DriveDivider()
-                                ActionRow("Reconcile metadata from Telegram","Keep valid local and concurrent changes",DriveIcons.Sync){bundle.actions.run{bundle.library.sync(full=true)}}
+                                ActionRow("Refresh library from Telegram","Keep valid local and concurrent changes",DriveIcons.Sync){bundle.actions.run{bundle.library.sync(full=true)}}
                             }}
                             item{SelectionContainer{Text(bundle.actions.diagnosticText(),style=MaterialTheme.typography.bodySmall)}}
                             items(state.healthProblems){p->Text(p,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
@@ -113,7 +120,7 @@ import app.tgdrive.library.*
                             item{SectionTitle("TG Drive","${BuildConfig.VERSION_NAME} · build ${BuildConfig.VERSION_CODE}")}
                             item{InfoCard("Independent Telegram client","Your files use your own account. No claim of unlimited storage, guaranteed SMS or permanent provider availability is made.",DriveIcons.CloudQueue)}
                             item{SelectionContainer{Text("Signing certificate SHA-256:\n${signingFingerprint(bundle.library.context)}",style=MaterialTheme.typography.bodySmall)}}
-                            item{InfoCard("Updates preserve identity","Install updates signed with the same certificate. Cache-only signing-key storage is a test distribution convenience; keep a secure long-lived key backup for production.")}
+                            item{InfoCard("Updates preserve identity","Install updates signed with the same certificate. Keep your existing app installed when updating to preserve its local settings.")}
                             item{InfoCard("Encryption implementation","Vault files use Tink authenticated streaming encryption with password and separate recovery wraps. The application format and native-library provenance still need independent security review before production assurances.")}
                         }
                     }
@@ -122,13 +129,20 @@ import app.tgdrive.library.*
             }
         }
     }
-    if(confirmCache)ConfirmDialog("Clear app cache?","Verified offline copies, upload sources and Telegram messages will remain.","Clear cache",{confirmCache=false}){bundle.actions.run{bundle.actions.clearCache()};confirmCache=false}
+    }
+    val form=rememberFormAction()
+    if(confirmCache)ConfirmDialog("Clear app cache?","Verified offline copies, upload sources and Telegram messages will remain.","Clear cache",{confirmCache=false},busy=form.busy,error=form.error){form.run({confirmCache=false}){bundle.actions.clearCache()}}
     info?.let{text->AlertDialog(onDismissRequest={info=null},title={Text("Storage details")},text={Text(text)},confirmButton={TextButton(onClick={info=null}){Text("Done")}})}
     cleanup?.let{items->ConfirmDialog("Review local cleanup","${items.size} original copies have a verified downloaded version. Each selected source will be rechecked before Android asks you to confirm deletion. No cloud files are deleted.","Review in Android",{cleanup=null}){system.cleanup(items.map{it.id});cleanup=null}}
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable fun SettingSwitch(title:String,description:String,value:Boolean,onChange:(Boolean)->Unit){
-    Surface(shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){
+    val request=remember{BringIntoViewRequester()}
+    val focus=LocalSettingFocus.current
+    var highlighted by remember(focus){mutableStateOf(false)}
+    LaunchedEffect(focus){if(focus==title){highlighted=true;delay(500);request.bringIntoView();delay(1800);highlighted=false}}
+    Surface(modifier=Modifier.bringIntoViewRequester(request),shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=if(highlighted)MaterialTheme.colorScheme.primary.copy(alpha=.14f)else MaterialTheme.colorScheme.surface){
         Row(Modifier.fillMaxWidth().toggleable(value=value,role=Role.Switch,onValueChange=onChange)
             .padding(horizontal=20.dp,vertical=17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){
@@ -146,4 +160,4 @@ fun signingFingerprint(context:android.content.Context):String=runCatching{
     java.security.MessageDigest.getInstance("SHA-256").digest(cert!!.toByteArray()).joinToString(":"){"%02X".format(it)}
 }.getOrDefault("Unavailable")
 
-internal fun settingsParent(page:String) = if(page=="vaults") "privacy" else "home"
+internal fun settingsParent(page:String) = if(page.substringBefore("#")=="vaults") "privacy" else "home"

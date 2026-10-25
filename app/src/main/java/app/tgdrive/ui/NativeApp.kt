@@ -31,6 +31,8 @@ data class SystemActions(
     val cleanup: (List<String>) -> Unit, val play: (Item) -> Unit, val setAppLock: (Boolean) -> Unit,
     val startTransfers: () -> Unit,
     val scanBackups: (String?,Boolean) -> Unit,
+    val reconnectBackup:(String)->Unit={},
+    val transferSettings:()->Unit={},val vaultSettings:()->Unit={},
 )
 enum class NativeTab(val title: String, val icon: ImageVector) {
     HOME("Home",DriveIcons.Home), GALLERY("Gallery",DriveIcons.PhotoLibrary), AUDIO("Audio",DriveIcons.AudioFile), SETTINGS("Settings",DriveIcons.Tune),
@@ -45,7 +47,7 @@ internal val nativeTabSaver = Saver<NativeTab,Any>(save={it.name},restore={saved
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
+fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,requestedRoute:String="",onRouteConsumed:()->Unit={}) {
     val auth by bundle.drive.state.collectAsStateWithLifecycle()
     val state by bundle.library.state.collectAsStateWithLifecycle()
     val profiles by pool.profiles.collectAsStateWithLifecycle()
@@ -57,6 +59,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     var homeQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
     var filesQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
     var galleryQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
+    var galleryKind by rememberSaveable(bundle.profile.id){mutableStateOf("All")}
     var gallerySort by rememberSaveable(bundle.profile.id){mutableStateOf(MediaSort.NEWEST)}
     var audioSort by rememberSaveable(bundle.profile.id){mutableStateOf(MediaSort.NEWEST)}
     var audioQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
@@ -66,26 +69,39 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     var filesFilters by remember{mutableStateOf<(() -> Unit)?>(null)}
     var addRequested by rememberSaveable(bundle.profile.id){mutableStateOf(false)}
     var recentView by rememberSaveable(bundle.profile.id){mutableStateOf(false)}
-    var accountSheet by remember { mutableStateOf(false) }
+    var accountSheet by rememberSaveable { mutableStateOf(false) }
+    var removeProfileId by rememberSaveable{mutableStateOf("")}
     var previewId by rememberSaveable(bundle.profile.id) { mutableStateOf("") }
+    LaunchedEffect(requestedRoute,state.loaded){if(state.loaded&&requestedRoute.isNotEmpty()){
+        if(requestedRoute in setOf("transferSettings","vaultSettings")){tab=NativeTab.SETTINGS;settingsRoute=if(requestedRoute=="vaultSettings")"vaults"else"transfers"}else{tab=NativeTab.HOME;homeRoute=if(requestedRoute=="backups")"backups"else"activity"};onRouteConsumed()
+    }}
     val pageState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(state.notice,state.error,auth.error) {
-        val message = state.error ?: state.notice ?: auth.error
-        if(message!=null){val undo=if(state.notice?.startsWith("Moved ")==true)state.undoTrashIds else emptyList();val result=snackbar.showSnackbar(message,actionLabel=if(undo.isNotEmpty()&&state.error==null)"Undo"else null);if(result==SnackbarResult.ActionPerformed&&undo.isNotEmpty())bundle.actions.run{bundle.actions.restore(undo)};if(state.loaded)bundle.library.clearNotice();if(state.loaded||auth.login!=LoginStep.READY)bundle.drive.clearNotice()}
+    LaunchedEffect(state.messageRevision,state.notice,state.error,auth.error) {
+        val displayed=state
+        val message = displayed.error ?: displayed.notice ?: auth.error
+        if(message!=null){val undo=if(displayed.notice?.startsWith("Moved ")==true)displayed.undoTrashIds else emptyList();val result=snackbar.showSnackbar(message,actionLabel=if(undo.isNotEmpty()&&displayed.error==null)"Undo"else null);if(result==SnackbarResult.ActionPerformed&&undo.isNotEmpty())bundle.actions.run{bundle.actions.restore(undo)};if(state.loaded)bundle.library.acknowledgeNotice(displayed.messageRevision,displayed.error,displayed.notice);if(state.loaded||auth.login!=LoginStep.READY)bundle.drive.clearNotice()}
     }
-    LaunchedEffect(settingsRoute){if(settingsRoute !in visibleSettingsRoutes)settingsRoute="home"}
+    LaunchedEffect(settingsRoute){if(settingsRoute.substringBefore("#") !in visibleSettingsRoutes)settingsRoute="home"}
     val preview = remember(state.items,previewId){state.items.firstOrNull { it.id == previewId&&it.deletedAt==0L }}
     var lastPreview by remember{mutableStateOf<Item?>(null)}
     SideEffect{if(preview!=null)lastPreview=preview}
-    val galleryPages=remember(state.items,state.versions,state.unlockedVaultIds,state.itemVaults,galleryQuery,gallerySort){sortMedia(libraryCollection(state,"gallery",galleryQuery),gallerySort,state.versions)}
+    val galleryResult=if(preview!=null&&tab==NativeTab.GALLERY) computedList(state.items,state.versions,state.local,state.unlockedVaultIds,state.itemVaults,galleryQuery,gallerySort,galleryKind){
+        sortMedia(libraryCollection(state,"gallery",galleryQuery).filter{galleryKind=="All"||galleryKind=="Photos"&&it.mime.startsWith("image/")||galleryKind=="Videos"&&it.mime.startsWith("video/")},gallerySort,state.versions)
+    }else emptyList()
+    var previousGallery by remember(galleryQuery,galleryKind,gallerySort){mutableStateOf(emptyList<Item>())}
+    SideEffect{if(preview!=null&&galleryResult!=null)previousGallery=galleryResult}
+    val allowedGalleryIds=state.items.filter{it.deletedAt==0L&&(state.itemVaults[it.id].orEmpty().isEmpty()||state.itemVaults[it.id] in state.unlockedVaultIds)}.mapTo(hashSetOf()){it.id}
+    val viewerGallery=(if(preview==null)previousGallery else galleryResult?:previousGallery).filter{it.id in allowedGalleryIds}
     BackHandler(enabled=tab!=NativeTab.HOME && preview==null){tab=NativeTab.HOME}
+    BackHandler(enabled=tab==NativeTab.GALLERY&&gallerySelecting&&preview==null){gallerySelected=emptyList();gallerySelecting=false}
     BackHandler(enabled=preview!=null){previewId=""}
     LaunchedEffect(state.items,previewId) { if(previewId.isNotEmpty()&&preview==null)previewId="" }
     AnimatedContent(targetState=preview!=null,transitionSpec={ horizontalNavigation(targetState) },label="file-preview") { showingPreview ->
         if(showingPreview) {
             val item=preview?:lastPreview
-            if(item!=null&&state.items.any{it.id==item.id&&it.deletedAt==0L})NativePreview(item,bundle,system,onBack={previewId=""},snackbar=snackbar,gallery=if(tab==NativeTab.GALLERY)galleryPages else emptyList(),onNavigate={previewId=it})
+            if(galleryResult==null&&viewerGallery.isEmpty())Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
+            else if(item!=null&&state.items.any{it.id==item.id&&it.deletedAt==0L})NativePreview(item,bundle,system,onBack={previewId=""},snackbar=snackbar,gallery=if(tab==NativeTab.GALLERY)viewerGallery else emptyList(),onNavigate={previewId=it})
         }else{
             val signingIn = auth.login != LoginStep.READY
             val headerTitle = when {
@@ -112,7 +128,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
                 when {
                     auth.login!=LoginStep.READY->Column(Modifier.fillMaxSize().padding(padding)){
                         TextButton({accountSheet=true},Modifier.align(Alignment.End).padding(end=12.dp)){Text("Manage accounts")}
-                        AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.weight(1f))
+                        AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.weight(1f),bundle.drive::changePhoneNumber,bundle.drive::resendCode)
                     }
                     !state.loaded->Column(Modifier.fillMaxSize().padding(padding).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                         val openError=state.error?:auth.error
@@ -121,7 +137,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
                     else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={horizontalNavigation(targetState.ordinal > initialState.ordinal)},label="navigation") { page ->
                         pageState.SaveableStateProvider(page){when(page){
                             NativeTab.HOME,NativeTab.FILES,NativeTab.TRANSFERS,NativeTab.BACKUPS->HomePage(state,bundle,system,onPreview={previewId=it},page=homeRoute,onPage={homeRoute=it;if(it=="files")recentView=false},onFolderTitle={folderTitle=it},onFolderBack={fileBack=it},homeQuery=homeQuery,filesQuery=filesQuery,onFilters={filesFilters=it},recentView=recentView,onRecent={recentView=true;filesQuery="";homeRoute="files"},onAdd={recentView=false;addRequested=true;homeRoute="files"},addRequested=addRequested,onAddConsumed={addRequested=false},homeSearch=HeaderSearch(homeQuery,{homeQuery=it},"Search your library"),filesSearch=HeaderSearch(filesQuery,{filesQuery=it},"Search files, tags and text",filesFilters))
-                            NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previewId=it},query=galleryQuery,search=HeaderSearch(galleryQuery,{galleryQuery=it},"Search photos and videos"),sort=gallerySort,selecting=gallerySelecting,selected=gallerySelected.toSet(),onSelection={gallerySelected=it.toList()},onSelectMode={gallerySelecting=true})
+                            NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previousGallery=emptyList();previewId=it},query=galleryQuery,search=HeaderSearch(galleryQuery,{galleryQuery=it},"Search photos and videos"),sort=gallerySort,kind=galleryKind,onKind={galleryKind=it},selecting=gallerySelecting,selected=gallerySelected.toSet(),onSelection={gallerySelected=it.toList()},onSelectMode={gallerySelecting=true})
                             NativeTab.AUDIO->MediaPage(state,bundle,system,gallery=false,onPreview={previewId=it},query=audioQuery,search=HeaderSearch(audioQuery,{audioQuery=it},"Search audio"),sort=audioSort)
                             NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME},page=settingsRoute,onPage={settingsRoute=it},onAccounts={accountSheet=true},query=settingsQuery,search=HeaderSearch(settingsQuery,{settingsQuery=it},"Search settings"))
                         }}
@@ -134,9 +150,13 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
         Column(Modifier.fillMaxWidth().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("Your accounts",style=MaterialTheme.typography.headlineSmall)
             profiles.forEach { profile->DriveCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth()){
-                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){AccountAvatar(pool.bundle(profile.id),profile.label);Spacer(Modifier.width(12.dp));Text(profile.label,Modifier.weight(1f));if(profile.id==bundle.profile.id)Icon(DriveIcons.Check,null,tint=MaterialTheme.colorScheme.primary)}
+                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){AccountAvatar(pool.bundle(profile.id),profile.label);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(profile.label);Text(if(profile.userId==0L)"Not signed in"else"Account · ${profile.userId.toString().takeLast(4)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};if(profile.id==bundle.profile.id)Icon(DriveIcons.Check,null,tint=MaterialTheme.colorScheme.primary)}
             }}
-            TextButton(onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(DriveIcons.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
+            profiles.filter{it.userId==0L&&it.id!=bundle.profile.id}.forEach{profile->
+                TextButton({removeProfileId=profile.id}){Text("Remove signed-out profile: ${profile.label}")}
+            }
+            TextButton(enabled=profiles.size<5,onClick={runCatching{pool.add()}.onFailure{bundle.library.report(it)};accountSheet=false}){Icon(DriveIcons.PersonAdd,null);Spacer(Modifier.width(8.dp));Text("Add Telegram account")}
+            if(profiles.size>=5)Text("Five profiles are already saved. Remove a signed-out profile to add another.",style=MaterialTheme.typography.bodySmall)
             if(auth.login==LoginStep.READY)TextButton(onClick={bundle.actions.run{
                 require(state.tasks.none{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}){"Pause transfers before signing out."}
                 bundle.library.context.stopService(android.content.Intent(bundle.library.context,PlaybackService::class.java))
@@ -146,9 +166,11 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
             Spacer(Modifier.height(12.dp))
         }
     }
-    state.lastShare?.let { result->AlertDialog(onDismissRequest=bundle.library::clearNotice,title={Text("Public copy created")},text={Column{
+    val accountForm=rememberFormAction()
+    profiles.firstOrNull{it.id==removeProfileId}?.let{profile->ConfirmDialog("Remove local profile?","${profile.label} will be removed from the account switcher. Telegram messages are not deleted. Profiles with pending or failed work must be reviewed first.","Remove profile",{removeProfileId=""},busy=accountForm.busy,error=accountForm.error){accountForm.run({removeProfileId=""}){pool.removeSignedOut(profile.id)}}}
+    state.lastShare?.let { result->AlertDialog(onDismissRequest=bundle.library::clearShare,title={Text("Public copy created")},text={Column{
         androidx.compose.foundation.text.selection.SelectionContainer { Text(result.url) };Text("This link grants access to an exported copy. Revoking cannot recall downloaded copies.",style=MaterialTheme.typography.bodySmall)
-    }},confirmButton={TextButton(onClick=bundle.library::clearNotice){Text("Done")}}) }
+    }},confirmButton={TextButton(onClick=bundle.library::clearShare){Text("Done")}}) }
 }
 
 @Composable fun SectionTitle(title: String, subtitle: String? = null) {

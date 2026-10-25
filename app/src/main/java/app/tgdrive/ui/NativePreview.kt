@@ -59,7 +59,8 @@ import kotlin.math.min
     DisposableEffect(activity){onDispose{activity?.window?.let{WindowCompat.getInsetsController(it,it.decorView).show(WindowInsetsCompat.Type.systemBars())}}}
     var zoomed by remember{mutableStateOf(false)}
     val currentNavigate by rememberUpdatedState(onNavigate)
-    LaunchedEffect(pager.settledPage,pages){pages.getOrNull(pager.settledPage)?.let{if(it.id!=item.id)currentNavigate(it.id)}}
+    LaunchedEffect(pages){val target=pages.indexOfFirst{it.id==item.id};if(target>=0&&target!=pager.settledPage)pager.scrollToPage(target)}
+    LaunchedEffect(pager.settledPage){chrome=true;zoomed=false;pages.getOrNull(pager.settledPage)?.let{if(it.id!=item.id)currentNavigate(it.id)}}
     HorizontalPager(pager,userScrollEnabled=!zoomed,modifier=Modifier.fillMaxSize(),key={pages[it].id}){index->
         val active=index==pager.settledPage
         NativePreviewPage(pages[index],bundle,system,onBack,snackbar,active,{value->if(active){zoomed=value;if(value)chrome=false}},chrome,{chrome=it})
@@ -74,27 +75,28 @@ import kotlin.math.min
     val visual=isPhoto||item.mime.startsWith("video/")
     var file by remember(item.versionId){mutableStateOf<File?>(null)}
     var error by remember(item.versionId){mutableStateOf<String?>(null)}
-    var editText by remember(item.versionId){mutableStateOf(false)}
-    var menu by remember(item.versionId){mutableStateOf(false)}
+    var editText by androidx.compose.runtime.saveable.rememberSaveable(item.versionId){mutableStateOf(false)}
+    var menu by androidx.compose.runtime.saveable.rememberSaveable(item.versionId){mutableStateOf(false)}
     var retry by remember(item.versionId){mutableIntStateOf(0)}
     val state by bundle.library.state.collectAsState()
     LaunchedEffect(item.versionId,retry,active){
         if(!active)return@LaunchedEffect
         error=null;file=null
-        if(isMedia) {if(item.mime.startsWith("audio/"))system.play(item)}
+        if(isMedia) {if(item.mime.startsWith("audio/")&&PlaybackService.nowPlaying.value?.let{it.profile==bundle.profile.id&&it.item==item.id}!=true)system.play(item)}
         else try {
             val version=bundle.library.version(item.versionId)
             file=withContext(Dispatchers.IO){bundle.library.cache!!.materialize(item,version,state.itemVaults[item.id].orEmpty())}
             if(version.sha256.isNotEmpty())withContext(Dispatchers.IO){bundle.library.setLocal(bundle.library.db().local(item.id).copy(verifiedVersion=version.id,verifiedAt=now(),missing=false))}
         } catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not open this file."}
     }
+    LaunchedEffect(active,error){if(active&&error!=null)onChrome(true)}
     var toolbarPixels by remember{mutableIntStateOf(0)}
     val density=androidx.compose.ui.platform.LocalDensity.current
     val toolbarHeight=with(density){toolbarPixels.toDp()}
     val toolbar: @Composable ()->Unit = {
-        TopAppBar(modifier=Modifier.onSizeChanged{toolbarPixels=it.height},title={Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall)},
-            navigationIcon={IconButton(onBack,Modifier.padding(start=8.dp)){Icon(DriveIcons.ArrowBack,"Back")}},
-            actions={IconButton({menu=true}){Icon(DriveIcons.MoreHoriz,"File actions")}},
+        TopAppBar(modifier=Modifier.onSizeChanged{toolbarPixels=it.height},title={Text(item.name,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall.copy(shadow=if(visual)androidx.compose.ui.graphics.Shadow(androidx.compose.ui.graphics.Color.Black,Offset(0f,1f),6f)else null))},
+            navigationIcon={IconButton(onBack,Modifier.padding(start=8.dp)){ContrastIcon(DriveIcons.ArrowBack,"Back",visual)}},
+            actions={IconButton({menu=true}){ContrastIcon(DriveIcons.MoreHoriz,"File actions",visual)}},
             colors=TopAppBarDefaults.topAppBarColors(containerColor=if(visual)androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.background,
                 titleContentColor=if(visual)androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onBackground,
                 navigationIconContentColor=if(visual)androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onBackground,
@@ -104,16 +106,16 @@ import kotlin.math.min
     Box(Modifier.fillMaxSize().background(if(visual)androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background)) {
         Box(Modifier.fillMaxSize().then(if(visual)Modifier else Modifier.padding(top=toolbarHeight))) {
             when {
-                isMedia && active -> key(retry){if(item.mime.startsWith("video/"))GalleryVideoPlayer(item,bundle,{retry++},chrome,{onChrome(!chrome)},{onChrome(false)},Modifier.fillMaxSize())else MediaPlayerPanel(item,bundle,onRetry={retry++},modifier=Modifier.fillMaxSize())}
+                isMedia && active -> key(retry){if(item.mime.startsWith("video/"))GalleryVideoPlayer(item,bundle,{retry++},chrome,{onChrome(!chrome)},{onChrome(false)},Modifier.fillMaxSize(),onOpen={system.openExternal(item)})else MediaPlayerPanel(item,bundle,onRetry={system.play(item);retry++},modifier=Modifier.fillMaxSize(),onOpen={system.openExternal(item)})}
                 isMedia -> FileThumbnail(item,bundle,Modifier.fillMaxSize(),square=true)
                 error!=null -> Column(Modifier.align(Alignment.Center).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     Text(error!!,color=MaterialTheme.colorScheme.error)
-                    DriveButton({retry++}){Text("Retry opening")}
+                    DriveButton({retry++}){Text("Retry opening")};TextButton({system.openExternal(item)}){Text("Open in another app")}
                 }
                 file==null -> Column(Modifier.align(Alignment.Center),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
                     FileThumbnail(item,bundle,Modifier.size(160.dp),square=true);CircularProgressIndicator();Text("Opening original…")
                 }
-                isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={onChrome(!chrome)},onZoom=onZoom)
+                isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={onChrome(!chrome)},onZoom=onZoom,onError={onChrome(true)},onOpen={system.openExternal(item)})
                 else -> Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     when {
                         item.mime=="application/pdf" -> PdfPreview(file!!,Modifier.weight(1f))
@@ -156,18 +158,20 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
     return Offset(if(x==0f)0f else pan.x.coerceIn(-x,x),if(y==0f)0f else pan.y.coerceIn(-y,y))
 }
 
-@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier,onTap:()->Unit,onZoom:(Boolean)->Unit){
+@Composable private fun ImagePreview(file:File,bundle:SessionBundle,modifier:Modifier,onTap:()->Unit,onZoom:(Boolean)->Unit,onError:()->Unit,onOpen:()->Unit){
     var loadError by remember(file){mutableStateOf(false)}
-    val bitmap by produceState<Bitmap?>(null,file) {
-        try {value=withContext(Dispatchers.IO){DocumentTools(bundle.library).decode(file)}}
+    var detailed by remember(file){mutableStateOf(false)}
+    val bitmap by produceState<Bitmap?>(null,file,detailed) {
+        try {if(detailed)delay(180);value=withContext(Dispatchers.IO){DocumentTools(bundle.library).decode(file,if(detailed)3600 else 1800)}}
         catch(e:CancellationException){throw e}catch(_:Exception){loadError=true}
     }
+    LaunchedEffect(loadError){if(loadError)onError()}
     val image=bitmap
-    if(image!=null)GalleryZoomImage(image,modifier,onTap,onZoom)
-    else Box(modifier,contentAlignment=Alignment.Center){if(loadError)Text("This image cannot be displayed. Use File actions to save or open it in another app.",Modifier.padding(24.dp))else CircularProgressIndicator()}
+    if(image!=null)GalleryZoomImage(image,modifier,onTap,{zoom->if(zoom)detailed=true;onZoom(zoom)},contentKey=file)
+    else Box(modifier,contentAlignment=Alignment.Center){if(loadError)Column(Modifier.padding(24.dp)){Text("This image cannot be displayed.");TextButton(onOpen){Text("Open in another app")}}else CircularProgressIndicator()}
 }
 @Composable private fun PdfPreview(file:File,modifier:Modifier){
-    var page by remember(file){mutableIntStateOf(0)};var pages by remember(file){mutableIntStateOf(1)}
+    var page by remember(file){mutableIntStateOf(0)};var pages by remember(file){mutableIntStateOf(1)};var jump by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf<String?>(null)}
     val bitmap by produceState<Bitmap?>(null,file,page){
         value=withContext(Dispatchers.IO){
@@ -179,18 +183,19 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
     }
     Column(modifier.fillMaxWidth().padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){
         error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
-        Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){TextButton(onClick={page--},enabled=page>0){Text("Previous")};Text("${page+1} / $pages");TextButton(onClick={page++},enabled=page+1<pages){Text("Next")}}
+        Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){TextButton(onClick={page--},enabled=page>0){Text("Previous")};TextButton({jump=true}){Text("${page+1} / $pages")};TextButton(onClick={page++},enabled=page+1<pages){Text("Next")}}
         val image=bitmap
-        if(image!=null)Image(image.asImageBitmap(),"PDF page ${page+1}",Modifier.fillMaxWidth().weight(1f)) else if(error==null)CircularProgressIndicator()
+        if(image!=null)GalleryZoomImage(image,Modifier.fillMaxWidth().weight(1f),{},{}) else if(error==null)CircularProgressIndicator()
     }
+    if(jump)TextInputDialog("Go to page","Page number",(page+1).toString(),{jump=false},validate={if(it.toIntOrNull() in 1..pages)null else "Enter a page from 1 to $pages."}){page=it.toInt()-1;jump=false}
 }
 @Composable private fun TextPreview(file:File){
-    val text by produceState("",file){value=withContext(Dispatchers.IO){file.bufferedReader().use{r->val chars=CharArray(100_000);val n=r.read(chars);if(n<0)"Empty file" else String(chars,0,n)+(if(n==chars.size)"\n\n[Preview limited to 100,000 characters]" else "")}}}
+    val text by produceState("Opening text…",file){value=withContext(Dispatchers.IO){try{file.bufferedReader().use{r->val chars=CharArray(100_000);val n=r.read(chars);if(n<0)"Empty file" else String(chars,0,n)+(if(n==chars.size)"\n\n[Preview limited to 100,000 characters]" else "")}}catch(e:CancellationException){throw e}catch(_:Exception){"This text could not be read. Use File actions to open it in another app."}}}
     SelectionContainer{Text(text,Modifier.fillMaxWidth().padding(20.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodyMedium)}
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable private fun MediaPlayerPanel(item:Item,bundle:SessionBundle,onRetry:()->Unit,modifier:Modifier){
+@Composable private fun MediaPlayerPanel(item:Item,bundle:SessionBundle,onRetry:()->Unit,modifier:Modifier,onOpen:()->Unit={}){
     val context=LocalContext.current
     val expected="tgdrive://file/${bundle.profile.id}/${item.id}/${item.versionId}"
     var controller by remember(expected){mutableStateOf<MediaController?>(null)}
@@ -222,7 +227,7 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
         }
     }
     Box(modifier,contentAlignment=Alignment.Center) {
-        Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
             FileThumbnail(item,bundle,Modifier.sizeIn(maxWidth=280.dp,maxHeight=280.dp).fillMaxWidth().aspectRatio(1f))
             Spacer(Modifier.height(20.dp))
             Text(item.name,style=MaterialTheme.typography.titleMedium,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
@@ -231,7 +236,7 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
             update={it.player=if(matching)controller else null},onRelease={it.player=null},modifier=Modifier.fillMaxWidth().height(160.dp))
         }
         if(!matching&&error==null)CircularProgressIndicator()
-        error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry playback")}}}
+        error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry playback")};TextButton(onOpen){Text("Open in another app")}}}
     }
 }
 

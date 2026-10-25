@@ -19,14 +19,14 @@ import kotlinx.coroutines.*
 
 internal fun nameError(value:String):String?=runCatching{cleanName(value)}.exceptionOrNull()?.message
 
-@Composable fun TextInputDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,busy:Boolean=false,error:String?=null,validate:(String)->String?={null},onConfirm:(String)->Unit){
-    var value by remember{mutableStateOf(initial)}
+@Composable fun TextInputDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,busy:Boolean=false,error:String?=null,validate:(String)->String?={null},allowEmpty:Boolean=false,onConfirm:(String)->Unit){
+    var value by androidx.compose.runtime.saveable.rememberSaveable(title,initial){mutableStateOf(initial)}
     var inputError by remember{mutableStateOf<String?>(null)}
     AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text(title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
         DriveTextField(value,{value=it;inputError=null},enabled=!busy,label={Text(label)},singleLine=true,modifier=Modifier.fillMaxWidth())
         if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
         (inputError?:error)?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-    }},confirmButton={TextButton(onClick={inputError=validate(value);if(inputError==null)onConfirm(value)},enabled=value.isNotBlank()&&!busy){Text(if(busy)"Saving…"else"Save")}},dismissButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
+    }},confirmButton={TextButton(onClick={inputError=validate(value);if(inputError==null)onConfirm(value)},enabled=(allowEmpty||value.isNotBlank())&&!busy){Text(if(busy)"Saving…"else"Save")}},dismissButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
 }
 @Composable fun ConfirmDialog(title:String,text:String,confirm:String,onDismiss:()->Unit,busy:Boolean=false,error:String?=null,onConfirm:()->Unit){
     AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text(title)},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -56,21 +56,22 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
     }}
 }
 @Composable fun FolderActionsDialog(folder:Folder,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
-    var mode by remember{mutableStateOf("actions")}
+    var mode by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf("actions")}
+    val form=rememberFormAction()
     when(mode){
-        "rename"->TextInputDialog("Rename folder","Name",folder.name,onDismiss,validate=::nameError){name->bundle.actions.run{bundle.library.updateFolder(folder.copy(name=cleanName(name)))};onDismiss()}
-        "move"->FolderPicker(state,folder.id,onDismiss,allowedVault=state.folderVaults[folder.id].orEmpty(),excluded=folderDescendants(folder.id,state.folders)){id->bundle.actions.run{bundle.library.updateFolder(folder.copy(parentId=id))};onDismiss()}
-        "remove"->ConfirmDialog("Remove folder?","Only an empty folder can be removed. Files are not automatically deleted.","Remove",onDismiss){bundle.actions.run{
+        "rename"->TextInputDialog("Rename folder","Name",folder.name,onDismiss,busy=form.busy,error=form.error,validate=::nameError){name->form.run(onDismiss){bundle.library.updateFolder(folder.copy(name=cleanName(name)))}}
+        "move"->FolderPicker(state,folder.id,onDismiss,allowedVault=state.folderVaults[folder.id].orEmpty(),excluded=folderDescendants(folder.id,state.folders),busy=form.busy,error=form.error){id->form.run(onDismiss){bundle.library.updateFolder(folder.copy(parentId=id))}}
+        "remove"->ConfirmDialog("Remove folder?","Only an empty folder can be removed. Files are not automatically deleted.","Remove",onDismiss,busy=form.busy,error=form.error){form.run(onDismiss){
             require(state.items.none{it.folderId==folder.id&&it.deletedAt==0L}&&state.folders.none{it.parentId==folder.id&&it.deletedAt==0L}){"Move files and subfolders before removing this folder."}
             bundle.library.updateFolder(folder.copy(deletedAt=now()))
-        };onDismiss()}
+        }}
         else->AlertDialog(onDismissRequest=onDismiss,title={Text(folder.name)},text={Column{TextButton(onClick={mode="rename"}){Text("Rename")};TextButton(onClick={mode="move"}){Text("Move folder")};TextButton(onClick={mode="remove"}){Text("Remove empty folder")}}},confirmButton={TextButton(onClick=onDismiss){Text("Done")}})
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun FileActionsSheet(item:Item,state:LibraryState,bundle:SessionBundle,system:SystemActions,onDismiss:()->Unit,onPreview:()->Unit){
-    var mode by remember{mutableStateOf("menu")}
-    var more by remember{mutableStateOf(false)}
+    var mode by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf("menu")}
+    var more by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(false)}
     var busy by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf<String?>(null)}
     val ui=rememberCoroutineScope()
@@ -83,10 +84,13 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
     }
     when(mode){
         "rename"->TextInputDialog("Rename file","File name",item.name,onDismiss,busy,error,validate=::nameError){v->perform{bundle.actions.rename(item.id,v)}}
-        "tags"->TextInputDialog("Edit tags","Comma-separated tags",item.tags.joinToString(", "),onDismiss,busy,error){v->perform{bundle.actions.tags(item.id,v)}}
+        "tags"->TextInputDialog("Edit tags","Comma-separated tags",item.tags.joinToString(", "),onDismiss,busy,error,allowEmpty=true){v->perform{bundle.actions.tags(item.id,v)}}
         "move"->FolderPicker(state,item.folderId,onDismiss,allowedVault=state.itemVaults[item.id].orEmpty(),busy=busy,error=error){target->perform{bundle.actions.move(listOf(item.id),target)}}
         "trash"->ConfirmDialog("Move to Trash?","The original Telegram message is retained until permanent deletion or retention cleanup.","Move to Trash",onDismiss,busy=busy,error=error){perform{bundle.actions.trash(listOf(item.id))}}
         "purge"->ConfirmDialog("Delete permanently?","Original Telegram messages and all versions will be deleted, including an imported original. This cannot be undone.","Delete permanently",onDismiss,busy=busy,error=error){perform{bundle.actions.purge(listOf(item.id))}}
+        "text"->ExtractedTextDialog(item,state,bundle,onDismiss)
+        "conflicts"->FileConflictDialog(item,state,bundle,onDismiss)
+        "links"->FileLinksDialog(item,state,bundle,onDismiss)
         "versions"->VersionSheet(item,state,bundle,onDismiss)
         "share"->PublicShareDialog(item,state,bundle,onDismiss,system.startTransfers)
         "webdav"->ConfirmDialog("Export to WebDAV?","This uploads a separate, decrypted copy to your configured server, then downloads it to verify its checksum. It consumes network data.","Export copy",onDismiss,busy=busy,error=error){perform{bundle.transfers.enqueue(TaskKind.WEBDAV,item);system.startTransfers()}}
@@ -108,11 +112,15 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
                 DriveGroup {
                 ActionRow("Save to device",icon=DriveIcons.Download){onDismiss();system.save(item)}
                 ActionRow("Share a copy",icon=DriveIcons.Share){onDismiss();system.shareExternal(item)}
+                ActionRow("Open in another app",icon=DriveIcons.FileOpen){onDismiss();system.openExternal(item)}
                 ActionRow(if(item.favorite)"Remove from favorites" else "Add to favorites",icon=DriveIcons.StarOutline){perform{bundle.actions.favorite(item.id)}}
                 }
                 DriveGroup {
                 ActionRow(if(state.local[item.id]?.pinnedVersion==item.versionId)"Remove offline copy" else "Keep offline",icon=DriveIcons.OfflinePin){perform{if(state.local[item.id]?.pinnedVersion==item.versionId)bundle.actions.unpin(item.id) else {bundle.transfers.enqueue(TaskKind.PIN,item);system.startTransfers()}}}
                 }
+                if(state.local[item.id]?.ocrText?.isNotBlank()==true)ActionRow("Extracted text",icon=DriveIcons.DocumentScanner){mode="text"}
+                if(state.conflicts.any{it.entityId==item.id||it.entityId==item.versionId})ActionRow("Review conflicting changes",icon=DriveIcons.History){mode="conflicts"}
+                if(state.shares.isNotEmpty())ActionRow("Manage exported links",icon=DriveIcons.Link){mode="links"}
                 TextButton({more=!more}){Text(if(more)"Fewer options"else"More options")}
                 if(more) {
                 DriveGroup {
@@ -139,17 +147,18 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun VersionSheet(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
-    ModalBottomSheet(onDismissRequest=onDismiss){LazyColumn(Modifier.fillMaxWidth().heightIn(max=600.dp),contentPadding=PaddingValues(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{SectionTitle("Content versions","Restoring retains the other content versions.")}
+    val form=rememberFormAction()
+    ModalBottomSheet(onDismissRequest={if(!form.busy)onDismiss()}){LazyColumn(Modifier.fillMaxWidth().heightIn(max=600.dp),contentPadding=PaddingValues(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        item{SectionTitle("Content versions","Restoring retains the other content versions.");if(form.busy)LinearProgressIndicator(Modifier.fillMaxWidth());form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}}
         items(state.versions.filter{it.itemId==item.id}.sortedByDescending{it.createdAt},key={it.id}){version->DriveCard(Modifier.fillMaxWidth()){
-            Column(Modifier.padding(16.dp)){Text(DateFormat.getDateTimeInstance().format(Date(version.createdAt)));Text(formatBytes(version.size),style=MaterialTheme.typography.bodySmall);if(version.id==item.versionId)Text("Current version",color=MaterialTheme.colorScheme.primary)else TextButton(onClick={bundle.actions.run{bundle.actions.restoreVersion(item.id,version.id)};onDismiss()}){Text("Restore this version")}}
+            Column(Modifier.padding(16.dp)){Text(DateFormat.getDateTimeInstance().format(Date(version.createdAt)));Text(formatBytes(version.size),style=MaterialTheme.typography.bodySmall);if(version.id==item.versionId)Text("Current version",color=MaterialTheme.colorScheme.primary)else TextButton(enabled=!form.busy,onClick={form.run(onDismiss){bundle.actions.restoreVersion(item.id,version.id)}}){Text("Restore this version")}}
         }}
     }}
 }
 @Composable private fun PublicShareDialog(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit,start:()->Unit){
     var hours by remember{mutableFloatStateOf(24f)};var password by remember{mutableStateOf("")};var consent by remember{mutableStateOf(false)}
     AlertDialog(onDismissRequest=onDismiss,title={Text("Create a public copy")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
-        if(state.preferences.sharingUrl.isBlank())Text("Configure an HTTPS sharing server in Settings → Connections. No public link can be created without it.",color=MaterialTheme.colorScheme.error)
+        if(state.preferences.sharingUrl.isBlank())Text("A sharing server must already be configured to create a public link.",color=MaterialTheme.colorScheme.error)
         Text("This exports a decrypted copy to your server, even for vault files. The server operator can read that copy. Revocation cannot recall downloaded copies.")
         Text("Expires in ${hours.toInt()} hours");Slider(hours,{hours=it},valueRange=1f..168f)
         DriveTextField(password,{password=it},label={Text("Optional link password")},visualTransformation=PasswordVisualTransformation(),singleLine=true)
@@ -158,10 +167,11 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ImportSheet(state:LibraryState,bundle:SessionBundle,folder:String,onDismiss:()->Unit){
-    var selected by remember{mutableStateOf(setOf<Long>())}
-    ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().padding(20.dp)){
+    var selected by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(setOf<Long>())};val form=rememberFormAction()
+    ModalBottomSheet(onDismissRequest={if(!form.busy)onDismiss()}){Column(Modifier.fillMaxWidth().padding(20.dp)){
+        if(form.busy)LinearProgressIndicator(Modifier.fillMaxWidth());form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
         SectionTitle("Existing Saved Messages","Only selected references are imported. Original captions are retained.")
-        DriveButton(onClick={val rows=state.incoming.filter{it.messageId in selected};bundle.actions.run{rows.forEach{bundle.library.importMessage(it,folder)}};onDismiss()},enabled=selected.isNotEmpty()){Text("Import ${selected.size} selected")}
+        DriveButton(onClick={val rows=state.incoming.filter{it.messageId in selected};form.run(onDismiss){rows.forEach{bundle.library.importMessage(it,folder)}}},enabled=selected.isNotEmpty()&&!form.busy){Text("Import ${selected.size} selected")}
         LazyColumn(Modifier.heightIn(max=450.dp)){items(state.incoming,key={it.messageId}){candidate->Row(Modifier.fillMaxWidth().padding(vertical=8.dp)){
             Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column(Modifier.weight(1f)){Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
         }}}
@@ -172,4 +182,37 @@ internal fun folderDescendants(id:String,folders:List<Folder>):Set<String> {
     val found=mutableSetOf(id);var changed=true
     while(changed){changed=false;folders.forEach{if(it.parentId in found&&found.add(it.id))changed=true}}
     return found
+}
+
+@Composable private fun ExtractedTextDialog(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
+    var text by androidx.compose.runtime.saveable.rememberSaveable(item.id){mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
+    val form=rememberFormAction()
+    AlertDialog(onDismissRequest={if(!form.busy)onDismiss()},title={Text("Extracted text")},text={Column {
+        SelectionContainer{Text("Select text to copy, or correct it below.",style=MaterialTheme.typography.bodySmall)}
+        DriveTextField(text,{if(it.length<=500_000)text=it},enabled=!form.busy,modifier=Modifier.fillMaxWidth().heightIn(min=180.dp,max=360.dp))
+        form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+    }},confirmButton={TextButton(enabled=!form.busy,onClick={form.run(onDismiss){bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))}}){Text("Save")}},dismissButton={TextButton(enabled=!form.busy,onClick=onDismiss){Text("Done")}})
+}
+@Composable private fun FileConflictDialog(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
+    val form=rememberFormAction()
+    val conflicts=state.conflicts.filter{it.entityId==item.id||it.entityId==item.versionId}
+    AlertDialog(onDismissRequest={if(!form.busy)onDismiss()},title={Text("Review changes")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Text("Choose which library information to keep. Other uploaded content versions remain available in Versions.")
+        if(conflicts.isEmpty())Text("All changes have been reviewed.")
+        conflicts.forEach{conflict->
+            fun description(op:Envelope):String=runCatching{val body=bundle.library.vaults.body(op);when(op.kind){EntityKind.ITEM->body.model<Item>().let{"${it.name} · Tags: ${it.tags.joinToString()} · ${if(it.deletedAt>0)"In Trash"else"Active"}"};EntityKind.VERSION->body.model<Version>().let{"${formatBytes(it.size)} · ${DateFormat.getDateTimeInstance().format(Date(it.createdAt))}"};else->"Library change"}}.getOrDefault("Unlock the vault to compare this change.")
+            Text("Current: ${description(conflict.kept)}")
+            Text("Other: ${description(conflict.incoming)}")
+            Row{TextButton(enabled=!form.busy,onClick={form.run{bundle.library.resolveConflict(conflict.id,false)}}){Text("Keep current")};TextButton(enabled=!form.busy,onClick={form.run{bundle.library.resolveConflict(conflict.id,true)}}){Text("Use other")}}
+        }
+        form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+    }},confirmButton={TextButton(enabled=!form.busy,onClick=onDismiss){Text("Done")}})
+}
+@Composable private fun FileLinksDialog(item:Item,state:LibraryState,bundle:SessionBundle,onDismiss:()->Unit){
+    val form=rememberFormAction()
+    AlertDialog(onDismissRequest={if(!form.busy)onDismiss()},title={Text("Exported public links")},text={Column(Modifier.verticalScroll(rememberScrollState())){
+        Text("All links created by this profile. Older records do not identify their source file. Revoking prevents future downloads; copies already saved cannot be recalled.")
+        state.shares.forEach{share->SelectionContainer{Text(share.url,style=MaterialTheme.typography.bodySmall)};TextButton(enabled=!form.busy,onClick={form.run{bundle.connections.revoke(share.id)}}){Text("Revoke link")}}
+        form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+    }},confirmButton={TextButton(enabled=!form.busy,onClick=onDismiss){Text("Done")}})
 }

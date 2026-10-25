@@ -21,11 +21,12 @@ internal fun AudioMiniPlayer(bundle:SessionBundle,onOpen:(String)->Unit) {
     val current=playback?:return
     if(current.profile!=bundle.profile.id)return
     val item=remember(state.items,current.item){state.items.firstOrNull{it.id==current.item&&it.deletedAt==0L}}?:return
+    val canPause=current.playWhenReady&&current.status !in setOf(app.tgdrive.PlaybackStatus.ERROR,app.tgdrive.PlaybackStatus.ENDED)
     Surface(color=MaterialTheme.colorScheme.surface,tonalElevation=0.dp) {
         Row(Modifier.fillMaxWidth().clickable(onClickLabel="Open audio player"){onOpen(item.id)}.padding(start=16.dp,end=8.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
             FileThumbnail(item,bundle,Modifier.size(42.dp))
-            Column(Modifier.weight(1f)) {Text(item.name,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(if(current.playing)"Now playing"else"Paused",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-            IconButton({PlaybackService.toggle(context,current.profile,current.item)}){Icon(if(current.playing)DriveIcons.Pause else DriveIcons.PlayArrow,if(current.playing)"Pause audio"else"Resume audio")}
+            Column(Modifier.weight(1f)) {Text(item.name,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(current.status.label,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            IconButton({PlaybackService.toggle(context,current.profile,current.item)}){Icon(if(canPause)DriveIcons.Pause else DriveIcons.PlayArrow,if(canPause)"Pause audio"else if(current.status==app.tgdrive.PlaybackStatus.ERROR)"Retry audio"else if(current.status==app.tgdrive.PlaybackStatus.ENDED)"Replay audio"else"Resume audio")}
             IconButton({PlaybackService.dismiss(context,current.profile,current.item)}){Icon(DriveIcons.Close,"Close audio player")}
         }
     }
