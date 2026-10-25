@@ -5,6 +5,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.*
 import app.tgdrive.library.Item
 import app.tgdrive.library.Version
 
@@ -27,11 +28,11 @@ internal fun sortMedia(items:List<Item>,sort:MediaSort,versions:List<Version>):L
 @Composable internal fun MediaSortMenu(gallery:Boolean,selected:MediaSort,onSelect:(MediaSort)->Unit) {
     var expanded by remember{mutableStateOf(false)}
     Box {
-        IconButton({expanded=true}){Icon(DriveIcons.Sort,if(gallery)"Sort gallery"else"Sort audio")}
+        IconButton({expanded=true},modifier=Modifier.semantics{stateDescription=selected.label}){Icon(DriveIcons.Sort,if(gallery)"Sort gallery"else"Sort audio")}
         // Material's anchored popup supplies native focus, Back dismissal, and scale/fade motion.
         DropdownMenu(expanded,{expanded=false},tonalElevation=0.dp) {
-            MediaSort.entries.forEach{sort->DropdownMenuItem(text={Text(sort.label)},onClick={onSelect(sort);expanded=false},
-                trailingIcon={if(sort==selected)Icon(DriveIcons.Check,"Selected")})}
+            MediaSort.entries.forEach{sort->DropdownMenuItem(modifier=Modifier.semantics{this.selected=sort==selected},text={Text(sort.label)},onClick={onSelect(sort);expanded=false},
+                trailingIcon={if(sort==selected)Icon(DriveIcons.Check,null)})}
         }
     }
 }

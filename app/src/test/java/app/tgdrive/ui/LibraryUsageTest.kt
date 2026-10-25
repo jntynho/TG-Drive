@@ -20,4 +20,24 @@ class LibraryUsageTest {
         assertTrue("accounts" in routes)
         assertTrue(routes.intersect(setOf("organize","conflicts","connections")).isEmpty())
     }
+    @Test fun transferStartRequiresWorkAndCanResumePausedAlongsideActiveUploads() {
+        assertFalse(canStartTransfers(LibraryState()))
+        val finished=TransferTask(kind=TaskKind.UPLOAD,title="Done",state=TaskState.COMPLETED)
+        assertFalse(canStartTransfers(LibraryState(tasks=listOf(finished))))
+        assertFalse(canStartTransfers(LibraryState(tasks=listOf(finished.copy(state=TaskState.FAILED)))))
+        assertTrue(canStartTransfers(LibraryState(tasks=listOf(finished.copy(state=TaskState.QUEUED)))))
+        assertTrue(canStartTransfers(LibraryState(tasks=listOf(finished.copy(state=TaskState.TRANSFERRING),finished.copy(id="paused",state=TaskState.PAUSED)))))
+        assertTrue(canStartTransfers(LibraryState(pendingOperations=1)))
+        assertFalse(canStartTransfers(LibraryState(pendingOperations=1,tasks=listOf(finished.copy(state=TaskState.TRANSFERRING)))))
+    }
+
+    @Test fun backwardAuthAndSettingsTransitionsFollowTheHierarchy() {
+        assertFalse(authStepForward(app.tgdrive.data.LoginStep.CODE,app.tgdrive.data.LoginStep.PHONE))
+        assertFalse(authStepForward(app.tgdrive.data.LoginStep.PASSWORD,app.tgdrive.data.LoginStep.CODE))
+        assertTrue(authStepForward(app.tgdrive.data.LoginStep.PHONE,app.tgdrive.data.LoginStep.CODE))
+        assertTrue(settingsForward("privacy#Encrypted vaults","vaults"))
+        assertFalse(settingsForward("vaults","privacy"))
+        assertFalse(settingsForward("transfers#Part size","home"))
+    }
+
 }

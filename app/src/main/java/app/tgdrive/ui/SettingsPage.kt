@@ -37,7 +37,7 @@ import app.tgdrive.library.*
         }, report={bundle.library.report(it)}) }
     LaunchedEffect(state.preferences) { editor.observe(state.preferences) }
     fun prefs(update:(Preferences)->Preferences) { editor.update(update) }
-    AnimatedContent(page,transitionSpec={horizontalNavigation(initialState=="home"||(targetState=="vaults"&&initialState=="privacy"))},label="settings-detail"){destination->
+    AnimatedContent(page,transitionSpec={horizontalNavigation(settingsForward(initialState,targetState))},label="settings-detail"){destination->
         val current=destination.substringBefore("#");val focus=destination.substringAfter("#","")
         val listState=rememberLazyListState()
         val indices=when(current){"transfers"->mapOf("Average upload pace" to 1,"Part size" to 3,"Background scan interval" to 5);"storage"->mapOf("Cache budget" to 2,"Free verified local originals" to 4,"Trash retention" to 5);"index"->mapOf("Export library information" to 1,"Import library information" to 2);"privacy"->mapOf("App lock" to 1,"Hide notification details" to 2,"Protect screenshots and recents" to 2,"Backup health notifications" to 2);else->emptyMap()}
@@ -132,7 +132,7 @@ import app.tgdrive.library.*
     }
     val form=rememberFormAction()
     if(confirmCache)ConfirmDialog("Clear app cache?","Verified offline copies, upload sources and Telegram messages will remain.","Clear cache",{confirmCache=false},busy=form.busy,error=form.error){form.run({confirmCache=false}){bundle.actions.clearCache()}}
-    info?.let{text->AlertDialog(onDismissRequest={info=null},title={Text("Storage details")},text={Text(text)},confirmButton={TextButton(onClick={info=null}){Text("Done")}})}
+    info?.let{text->AlertDialog(onDismissRequest={info=null},title={Text("Storage details")},text={Text(text,Modifier.verticalScroll(rememberScrollState()))},confirmButton={TextButton(onClick={info=null}){Text("Done")}})}
     cleanup?.let{items->ConfirmDialog("Review local cleanup","${items.size} original copies have a verified downloaded version. Each selected source will be rechecked before Android asks you to confirm deletion. No cloud files are deleted.","Review in Android",{cleanup=null}){system.cleanup(items.map{it.id});cleanup=null}}
 }
 
@@ -161,3 +161,8 @@ fun signingFingerprint(context:android.content.Context):String=runCatching{
 }.getOrDefault("Unavailable")
 
 internal fun settingsParent(page:String) = if(page.substringBefore("#")=="vaults") "privacy" else "home"
+
+internal fun settingsForward(from:String,to:String):Boolean {
+    fun depth(route:String)=when(route.substringBefore("#")){"home"->0;"vaults"->2;else->1}
+    return depth(to)>=depth(from)
+}

@@ -90,3 +90,14 @@ Local UI renders use synthetic state. Playback codecs, account avatars, real pro
 ## 0.9 audit regressions
 
 Added integration cases for an original edited after snapshot preparation (receipt must retain the older revision fingerprint), encrypted pending recovery acknowledgement, sequence-specific notice acknowledgement with an independent share result, partial rule updates preserving a newer toggle, idempotent restored folder drafts and repeat import references. Compose checks cover a real nested setting search target, a background computation held during a privacy-scope change, and server-gated code-recovery actions. Native GalleryGesturesTest also replaces the decoded bitmap while zoomed and invokes the accessible Fit image action. These cases use synthetic sources/transport and do not establish live Telegram rate or physical-device frame performance.
+
+
+## UI/UX Pro Max review
+
+The local UI corrections are recorded in [the Arabic review](UI-UX-SKILL-REVIEW.ar.md). Debug and Release each pass 128 tests, including 320dp/200% text, 640×360dp landscape authentication, saveable non-secret drafts, locked-folder visibility, buffering audio controls and bounded seek. `assembleDebug`, `assembleDebugAndroidTest` and `lintDebug` pass; lint reports no errors and 30 warnings. A full run hit an existing 5-second transfer-test timeout once; isolated transfer tests and a sequential full rerun passed without modifying that test or its assertions. The skill checkout stays outside the repository; no runtime dependency was added. Real TalkBack, system keyboard/biometrics, motion-scale changes and physical-device frame timing remain device checks.
+
+## 0.10 upload audit and combined validation
+
+The [upload audit](UPLOAD-0.10.ar.md) accompanies the UI review above. Debug and Release each pass **141 tests, zero failures/errors/skips**. The 13 added upload cases cover zero artificial success spacing with serialized publication, premium/overflow waits, whole-source and part hashes, event-driven completion, nonblocking acknowledged-upload release, immediate single-message completion, satisfied device gates, mutable multipart sources, corrupted encrypted staging, recovered caption mismatch and durable completion receipts. Ordinary errors containing a wait-like source name cannot invent an account cooldown.
+
+Combined validation uses `--max-workers=1 testDebugUnitTest testReleaseUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest`. Both lint variants report zero errors and 30 warnings. `actionlint` passes for the updated release workflow. Compilation of device tests does not mean they were executed locally; GitHub retains native device, signed APK and upgrade gates before publication. Fake-wire and virtual-time tests verify pipeline behavior, not real Telegram throughput or immunity to server limits.

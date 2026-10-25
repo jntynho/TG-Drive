@@ -52,12 +52,14 @@ class MainActivity : FragmentActivity() {
     private var cameraUri:Uri?=null
     private var cleanupIds by mutableStateOf<List<String>>(emptyList())
     private var locked by mutableStateOf(false)
+    private var lockError by mutableStateOf<String?>(null)
     private var pendingShared by mutableStateOf<List<Uri>>(emptyList())
     private var sharedFolder by mutableStateOf("")
     private var sharedFolderPicker by mutableStateOf(false)
     private var unlockThen:(()->Unit)?=null
     private var lockJob:Job?=null
     private var backgroundAt=0L
+    private var notificationPermissionAsked=false
     private val notices=registerForActivityResult(ActivityResultContracts.RequestPermission()){}
     private val uploads=registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty())enqueueInputs(uris,target.copy())}
     private val scanPicker=registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty()){uris.forEach{runCatching{contentResolver.takePersistableUriPermission(it,Intent.FLAG_GRANT_READ_URI_PERMISSION)}};scanImages=uris;scannerOpen=true}}
@@ -70,7 +72,7 @@ class MainActivity : FragmentActivity() {
     private val save=registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){uri->if(uri!=null)saveResult(uri,saveTarget.copy())}
     private val indexInput=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null){val b=app.sessions.bundle(target.profile);b.actions.run{b.library.importIndex(uri);startQueue(b.profile.id)}}}
     private val deletion=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()){result->app.sessions.active().library.notice(if(result.resultCode==RESULT_OK)"Android confirmed deletion of selected local copies. Cloud content was not deleted." else "Local deletion was cancelled.")}
-    private val deviceCredential=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->if(result.resultCode==RESULT_OK)unlocked() else app.sessions.active().library.notice("Device authentication was not completed.")}
+    private val deviceCredential=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->if(result.resultCode==RESULT_OK)unlocked() else authenticationFailed("Device authentication was not completed. Try again.")}
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
@@ -85,13 +87,14 @@ class MainActivity : FragmentActivity() {
         cleanupIds=savedInstanceState?.getStringArrayList("cleanupIds")?:emptyList()
         scanImages=savedInstanceState?.getStringArrayList("scanImages")?.map(Uri::parse)?:emptyList()
         notificationRoute=savedInstanceState?.getString("notificationRoute").orEmpty()
+        notificationPermissionAsked=savedInstanceState?.getBoolean("notificationPermissionAsked")?:false
         handleNotification(intent)
         pendingShared=savedInstanceState?.getStringArrayList("shared")?.map(Uri::parse)?:emptyList()
         setContent{
             val active by app.sessions.activeId.collectAsStateWithLifecycle()
             val bundle=remember(active){app.sessions.bundle(active)}
             val state by bundle.library.state.collectAsStateWithLifecycle()
-            LaunchedEffect(active){sharedFolder="";locked=app.sessions.lockEnabled(active)&&!app.authorized(active);if(!locked&&app.sessions.lockEnabled(active))app.authorize(active)}
+            LaunchedEffect(active){sharedFolder="";lockError=null;locked=app.sessions.lockEnabled(active)&&!app.authorized(active);if(!locked&&app.sessions.lockEnabled(active))app.authorize(active)}
             LaunchedEffect(state.preferences.secureScreen,state.preferences.lockEnabled,state.unlockedVaultIds){
                 if(state.preferences.secureScreen||state.preferences.lockEnabled||state.unlockedVaultIds.isNotEmpty())window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
@@ -113,9 +116,10 @@ class MainActivity : FragmentActivity() {
                 reconnectBackup={id->target=PendingTarget(active);reconnectRuleId=id;tree.launch(bundle.library.state.value.rules.firstOrNull{it.id==id}?.treeUri?.let(Uri::parse))},
             )}
             DriveTheme{
-                if(locked)Surface(Modifier.fillMaxSize()){Column(Modifier.fillMaxSize().padding(32.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
-                    Text("Your space is locked",style=MaterialTheme.typography.headlineMedium);Spacer(Modifier.height(14.dp));Text("Use your device credential or biometrics to continue.");Spacer(Modifier.height(22.dp));DriveButton(onClick={authenticate()}){Text("Unlock TG Drive")}
-                }}else key(active){NativeApp(bundle,app.sessions,system,notificationRoute,{notificationRoute=""})}
+                if(locked)LockedScreen(lockError,{authenticate()},{
+                    runCatching{startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS))}
+                        .onFailure{lockError="Open Android settings and configure a secure screen lock."}
+                })else key(active){NativeApp(bundle,app.sessions,system,notificationRoute,{notificationRoute=""})}
                 if(!locked){
                     LaunchedEffect(preparation.export,active){preparation.export?.takeIf{it.profile==active}?.let{result->
                         preparation.export=null
@@ -141,7 +145,7 @@ class MainActivity : FragmentActivity() {
         handleShare(intent)
     }
     override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);handleNotification(intent);handleShare(intent)}
-    override fun onSaveInstanceState(out:Bundle){out.putString("target",target.json());out.putString("save",saveTarget.json());out.putStringArrayList("shared",ArrayList(pendingShared.map{it.toString()}));cameraUri?.let{out.putString("camera",it.toString())};out.putString("pickedTree",pickedTree?.toString());out.putString("reconnectRule",reconnectRuleId);out.putBoolean("scannerOpen",scannerOpen);out.putStringArrayList("scanImages",ArrayList(scanImages.map{it.toString()}));out.putString("notificationRoute",notificationRoute);out.putStringArrayList("cleanupIds",ArrayList(cleanupIds));super.onSaveInstanceState(out)}
+    override fun onSaveInstanceState(out:Bundle){out.putBoolean("notificationPermissionAsked",notificationPermissionAsked);out.putString("target",target.json());out.putString("save",saveTarget.json());out.putStringArrayList("shared",ArrayList(pendingShared.map{it.toString()}));cameraUri?.let{out.putString("camera",it.toString())};out.putString("pickedTree",pickedTree?.toString());out.putString("reconnectRule",reconnectRuleId);out.putBoolean("scannerOpen",scannerOpen);out.putStringArrayList("scanImages",ArrayList(scanImages.map{it.toString()}));out.putString("notificationRoute",notificationRoute);out.putStringArrayList("cleanupIds",ArrayList(cleanupIds));super.onSaveInstanceState(out)}
     override fun onStart(){super.onStart();lockJob?.cancel();val id=app.sessions.activeId.value;if(app.sessions.lockEnabled(id)){if(!app.authorized(id))locked=true else app.authorize(id)}}
     override fun onStop(){
         super.onStop();if(isChangingConfigurations)return
@@ -152,17 +156,22 @@ class MainActivity : FragmentActivity() {
             bundle.transfers.pauseProtected();bundle.library.lockVaults()
         }}
     }
-    private fun unlocked(){val id=app.sessions.activeId.value;app.authorize(id);locked=false;unlockThen?.invoke();unlockThen=null}
+    private fun unlocked(){lockError=null;val id=app.sessions.activeId.value;app.authorize(id);locked=false;unlockThen?.invoke();unlockThen=null}
     private fun authenticate(){
+        lockError=null
         val manager=getSystemService(KeyguardManager::class.java)
-        if(!manager.isDeviceSecure){app.sessions.active().library.notice("Configure a secure screen lock in Android settings first.");return}
+        if(!manager.isDeviceSecure){authenticationFailed("Configure a secure screen lock in Android settings first.");return}
         if(Build.VERSION.SDK_INT<30){deviceCredential.launch(manager.createConfirmDeviceCredentialIntent("Unlock TG Drive","Confirm your device screen lock."));return}
         val prompt=BiometricPrompt(this,ContextCompat.getMainExecutor(this),object:BiometricPrompt.AuthenticationCallback(){
             override fun onAuthenticationSucceeded(result:BiometricPrompt.AuthenticationResult){unlocked()}
-            override fun onAuthenticationError(code:Int,message:CharSequence){app.sessions.active().library.notice("Device authentication was not completed.")}
+            override fun onAuthenticationError(code:Int,message:CharSequence){authenticationFailed("Device authentication was not completed. Try again.")}
         })
         prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Unlock TG Drive")
             .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build())
+    }
+    private fun authenticationFailed(message:String){
+        unlockThen=null
+        if(locked)lockError=message else app.sessions.active().library.notice(message)
     }
     private fun changeAppLock(bundle:SessionBundle,enabled:Boolean){
         unlockThen={bundle.actions.run{bundle.library.updatePreferences{it.copy(lockEnabled=enabled)};app.sessions.setLockEnabled(bundle.profile.id,enabled)}}
@@ -170,7 +179,9 @@ class MainActivity : FragmentActivity() {
     }
     private fun startQueue(profile:String,rule:String?=null,force:Boolean=false,scan:Boolean=false){
         runOnUiThread{
-            if(Build.VERSION.SDK_INT>=33)notices.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if(Build.VERSION.SDK_INT>=33&&!notificationPermissionAsked&&ContextCompat.checkSelfPermission(this,Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                notificationPermissionAsked=true;notices.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
             val command=Intent(this,TransferService::class.java).putExtra("profile",profile).putExtra("rule",rule).putExtra("force",force).setAction(if(scan)TransferService.SCAN else TransferService.PROCESS)
             runCatching{ContextCompat.startForegroundService(this,command)}.onFailure{BackgroundWork.enqueue(this,profile);app.sessions.bundle(profile).library.notice("Android deferred background work. Open Activity and retry while the app is visible.")}
         }
@@ -272,7 +283,7 @@ class MainActivity : FragmentActivity() {
     }
     @Composable private fun BackupWizard(uri:Uri,bundle:SessionBundle){
         var name by androidx.compose.runtime.saveable.rememberSaveable(uri.toString()){mutableStateOf("Selected folder")};var fromToday by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(false)};val form=rememberFormAction()
-        AlertDialog(onDismissRequest={if(!form.busy)pickedTree=null},title={Text("Back up this folder")},text={Column{
+        AlertDialog(onDismissRequest={if(!form.busy)pickedTree=null},title={Text("Back up this folder")},text={Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())){
             form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(form.busy)LinearProgressIndicator(Modifier.fillMaxWidth())
             DriveTextField(name,{name=it},label={Text("Rule name")});DriveCheckboxRow("Only files modified from today",fromToday,{fromToday=it})
             Text("This is upload-only. Background scheduling depends on Android, network rules and destination vault availability.",style=MaterialTheme.typography.bodySmall)
@@ -283,7 +294,7 @@ class MainActivity : FragmentActivity() {
     @Composable private fun ScannerWizard(bundle:SessionBundle){
         var trim by androidx.compose.runtime.saveable.rememberSaveable{mutableFloatStateOf(0f)};var rotation by androidx.compose.runtime.saveable.rememberSaveable{mutableIntStateOf(0)};var grayscale by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(true)};var busy by remember{mutableStateOf(false)};var localError by remember{mutableStateOf<String?>(null)}
         val ui=rememberCoroutineScope()
-        AlertDialog(onDismissRequest={if(!busy)scannerOpen=false},title={Text("Scan to PDF")},text={Column{
+        AlertDialog(onDismissRequest={if(!busy)scannerOpen=false},title={Text("Scan to PDF")},text={Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())){
             Text("${scanImages.size} selected pages. Processing stays on this device.")
             Row{TextButton(onClick={
                 val file=File(filesDir,"captures/${bundle.profile.id}/camera-${newId()}.jpg").apply{parentFile!!.mkdirs()};cameraUri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file);capture.launch(cameraUri!!)

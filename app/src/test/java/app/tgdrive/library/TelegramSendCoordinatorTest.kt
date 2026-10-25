@@ -26,6 +26,8 @@ class TelegramSendCoordinatorTest {
         assertEquals(0,sender.until)
         assertEquals(160000L,telegramWaitMillis("FLOOD_WAIT_160"))
         assertNull(telegramWaitMillis("file 160 not found"))
+        assertNull(sender.recordRateLimit(IllegalStateException("Source FLOOD_WAIT_160 not found")))
+        assertEquals(0L,sender.until)
     }
     @Test fun slowContentDoesNotOccupyThePublicationLane()=runTest {
         val sender=TelegramSendCoordinator({testScheduler.currentTime})
@@ -62,6 +64,23 @@ class TelegramSendCoordinatorTest {
         assertTrue(saved>=161_000);assertTrue(publishing.isActive)
         release.complete(Unit);publishing.join()
         try{sender.send{fail("A completed older publisher must not clear the newer cooldown")}}catch(_:SendCooldownException){}
+    }
+
+    @Test fun healthyMessagesHaveNoInventedGapAndRemainSerialized()=runTest {
+        val sender=TelegramSendCoordinator({testScheduler.currentTime})
+        val order=mutableListOf<Int>();var active=0;var maximum=0
+        coroutineScope{repeat(50){i->launch{sender.send{active++;maximum=maxOf(maximum,active);yield();order.add(i);active--}}}}
+        assertEquals((0 until 50).toList(),order)
+        assertEquals(1,maximum)
+        assertEquals(0L,testScheduler.currentTime)
+    }
+    @Test fun premiumAndHugeServerWaitsCannotOverflowIntoImmediateRetry()=runTest {
+        assertEquals(900_000L,telegramWaitMillis("FLOOD_PREMIUM_WAIT_900"))
+        assertEquals(Long.MAX_VALUE,telegramWaitMillis("FLOOD_WAIT_92233720368547758070"))
+        val sender=TelegramSendCoordinator({testScheduler.currentTime})
+        val deadline=sender.recordRateLimit(TelegramRequestException(429,"FLOOD_PREMIUM_WAIT_900"))
+        assertEquals(901_000L,deadline)
+        try{sender.send{fail("Server wait must not be bypassed")}}catch(_:SendCooldownException){}
     }
 
 }

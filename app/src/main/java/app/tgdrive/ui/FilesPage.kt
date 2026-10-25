@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,14 +71,15 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
     LaunchedEffect(visible,computed!=null){if(computed!=null)storedSelection=selected.intersect(visible.mapTo(hashSetOf()){it.id})}
     val unlocked=vault.isEmpty()||vault in state.unlockedVaultIds
     val folders=remember(state.folders,folder,vault,query,collection,recentView,unlocked){state.folders.filter{unlocked&&it.parentId==folder&&it.deletedAt==0L&&state.folderVaults[it.id].orEmpty()==vault&&collection=="All"&&query.isBlank()&&!recentView}.sortedBy{it.name.lowercase()}}
+    val usage=remember(state.items,state.itemVaults,state.unlockedVaultIds){libraryUsage(state)}
     val bulk=rememberFormAction()
     BoxWithConstraints(Modifier.fillMaxSize()){
         val columns=(maxWidth.value/(180*androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f))).toInt().coerceIn(1,6)
         LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=160.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
             if(folder.isNotEmpty()) item {Text(folderPath(folder,state.folders),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
             item {Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                MiniStat(state.items.count{it.deletedAt==0L&&it.versionId.isNotEmpty()}.toString(),"Files",Modifier.weight(1f))
-                MiniStat(formatBytes(state.items.filter{it.deletedAt==0L}.sumOf{it.size}),"Indexed content",Modifier.weight(1f))
+                MiniStat(usage.count.toString(),"Files",Modifier.weight(1f))
+                MiniStat(formatBytes(usage.bytes),"Indexed content",Modifier.weight(1f))
             }}
             if(state.pendingOperations>0)item {InfoCard("Metadata waiting to sync","${state.pendingOperations} changes are saved on this phone. Your original files remain in Telegram.",DriveIcons.CloudSync)}
 
@@ -91,8 +94,8 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             if(vault.isNotEmpty()&&vault !in state.unlockedVaultIds)item{InfoCard("Vault is locked","Unlock it from Settings → Vaults. File names and contents stay hidden while locked.",DriveIcons.Lock)}
             if(folder.isNotEmpty())item{TextButton(onClick={folder=current?.parentId?:"";storedSelection=emptySet()}){Icon(DriveIcons.ArrowBack,null);Spacer(Modifier.width(6.dp));Text("Parent folder")}}
             if(state.syncing)item{LinearProgressIndicator(Modifier.fillMaxWidth());Text("Reconciling your Telegram index…",style=MaterialTheme.typography.labelSmall)}
-            items(folders,key={"folder:${it.id}"}){f->Surface(shape=DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface,modifier=Modifier.animateItem().combinedClickable(onClick={folder=f.id},onLongClick={folderActionId=f.id})){
-                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(DriveIcons.Folder,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(14.dp));Text(f.name,Modifier.weight(1f),fontWeight=FontWeight.Medium);IconButton(onClick={folderActionId=f.id}){Icon(DriveIcons.MoreHoriz,"Folder actions")}}
+            items(folders,key={"folder:${it.id}"}){f->Surface(shape=DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface,modifier=Modifier.animateItem().combinedClickable(role=Role.Button,onClickLabel="Open folder ${f.name}",onClick={folder=f.id},onLongClick={folderActionId=f.id},onLongClickLabel="Folder actions")){
+                Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(DriveIcons.Folder,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(14.dp));Text(f.name,Modifier.weight(1f),fontWeight=FontWeight.Medium);IconButton(onClick={folderActionId=f.id}){Icon(DriveIcons.MoreHoriz,"Actions for folder ${f.name}")}}
             }}
             if(computed==null)item{LinearProgressIndicator(Modifier.fillMaxWidth())}
             if(query.isNotBlank())item{Text("Searching all unlocked files",style=MaterialTheme.typography.labelSmall)}
@@ -104,14 +107,14 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
             }}
             if(state.preferences.showGrid){
                 items(visible.chunked(columns),key={"grid:${it.first().id}"}){row->Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    row.forEach{item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,true,Modifier.weight(1f),onClick={if(selected.isNotEmpty())storedSelection=toggle(selected,item.id) else if(collection=="Trash")actionId=item.id else onPreview(item.id)},onLongClick={storedSelection=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle)}
+                    row.forEach{item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,true,Modifier.weight(1f),onClick={if(selected.isNotEmpty())storedSelection=toggle(selected,item.id) else if(collection=="Trash")actionId=item.id else onPreview(item.id)},onLongClick={storedSelection=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle,selecting=selected.isNotEmpty())}
                     repeat(columns-row.size){Spacer(Modifier.weight(1f))}
                 }}
-            }else items(visible,key={it.id}){item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,false,Modifier.animateItem(),onClick={if(selected.isNotEmpty())storedSelection=toggle(selected,item.id) else if(collection=="Trash")actionId=item.id else onPreview(item.id)},onLongClick={storedSelection=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle)}
+            }else items(visible,key={it.id}){item->NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),item.id in selected,false,Modifier.animateItem(),onClick={if(selected.isNotEmpty())storedSelection=toggle(selected,item.id) else if(collection=="Trash")actionId=item.id else onPreview(item.id)},onLongClick={storedSelection=toggle(selected,item.id)},onMenu={actionId=item.id},bundle=bundle,selecting=selected.isNotEmpty())}
             item{Text("Stored in your own Saved Messages. Telegram account limits apply.",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         }
         if(selected.isEmpty())ExtendedFloatingActionButton(onClick={addSheet=true},icon={Icon(DriveIcons.Add,null)},text={Text("Add files")},
-            containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary,
+            containerColor=DriveStyle.ActionBlue,contentColor=DriveStyle.OnAction,
             shape=DriveStyle.PillShape,elevation=FloatingActionButtonDefaults.elevation(0.dp),
             modifier=Modifier.align(Alignment.BottomEnd).padding(20.dp))
         AnimatedVisibility(selected.isNotEmpty(),modifier=Modifier.align(Alignment.BottomCenter)){
@@ -120,12 +123,12 @@ fun FilesPage(state: LibraryState,bundle: SessionBundle,system: SystemActions,on
                     bulk.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
                     Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={storedSelection=emptySet()}){Icon(DriveIcons.Close,"Clear selection")};Text("${selected.size} selected",Modifier.weight(1f));TextButton(onClick={storedSelection=visible.map{it.id}.toSet()}){Text("Select all")}}
                     androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                        TextButton(onClick={system.exportZip(selected.toList())}){Text("Save ZIP")}
-                        TextButton(onClick={moveSelection=true},enabled=selected.map{state.itemVaults[it].orEmpty()}.distinct().size==1&&collection!="Trash"){Text("Move")}
+                        TextButton(enabled=!bulk.busy,onClick={system.exportZip(selected.toList())}){Text("Save ZIP")}
+                        TextButton(onClick={moveSelection=true},enabled=!bulk.busy&&selected.map{state.itemVaults[it].orEmpty()}.distinct().size==1&&collection!="Trash"){Text("Move")}
                         if(collection=="Trash"){
                             TextButton(enabled=!bulk.busy,onClick={val ids=selected.toList();bulk.run({storedSelection=emptySet()}){bundle.actions.restore(ids)}}){Text("Restore")}
-                            TextButton(onClick={confirmPurge=true}){Text("Delete",color=MaterialTheme.colorScheme.error)}
-                        }else TextButton(onClick={confirmTrash=true}){Text("Trash")}
+                            TextButton(enabled=!bulk.busy,onClick={confirmPurge=true}){Text("Delete",color=MaterialTheme.colorScheme.error)}
+                        }else TextButton(enabled=!bulk.busy,onClick={confirmTrash=true}){Text("Trash")}
                     }
                 }
             }
@@ -158,8 +161,8 @@ fun folderPath(id:String,folders:List<Folder>):String {
 }
 @Composable private fun MiniStat(value:String,label:String,modifier:Modifier){Card(modifier,shape=DriveStyle.CardShape,colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){Column(Modifier.padding(17.dp)){Text(value,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold);Text(label,style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}}}
 @OptIn(ExperimentalFoundationApi::class)
-@Composable fun NativeFileCard(item:Item,local:LocalItem?,encrypted:Boolean,selected:Boolean,grid:Boolean,modifier:Modifier=Modifier,onClick:()->Unit,onLongClick:()->Unit,onMenu:()->Unit,bundle:SessionBundle?=null){
-    Surface(modifier=modifier.fillMaxWidth().semantics{this.selected=selected}.combinedClickable(onClick=onClick,onLongClick=onLongClick,onLongClickLabel="Select file"),shape=DriveStyle.CardShape,color=if(selected)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface){
+@Composable fun NativeFileCard(item:Item,local:LocalItem?,encrypted:Boolean,selected:Boolean,grid:Boolean,modifier:Modifier=Modifier,onClick:()->Unit,onLongClick:()->Unit,onMenu:()->Unit,bundle:SessionBundle?=null,selecting:Boolean=false){
+    Surface(modifier=modifier.fillMaxWidth().semantics{this.selected=selected}.combinedClickable(role=Role.Button,onClickLabel=if(selecting)if(selected)"Deselect ${item.name}"else"Select ${item.name}"else"Open ${item.name}",onClick=onClick,onLongClick=onLongClick,onLongClickLabel="Select file"),shape=DriveStyle.CardShape,color=if(selected)MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface){
         if(grid)Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){FileThumbnail(item,bundle,Modifier.size(72.dp));Spacer(Modifier.weight(1f));IconButton(onClick=onMenu){Icon(DriveIcons.MoreHoriz,"Actions for ${item.name}")}}
             Text(item.name,maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall);Text(formatBytes(item.size),style=MaterialTheme.typography.labelSmall);FileIndicators(item,local,encrypted)
@@ -184,15 +187,16 @@ fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.
     var retry by remember(item.id,item.versionId){mutableIntStateOf(0)}
     var failed by remember(item.id,item.versionId){mutableStateOf(false)}
     var loading by remember(item.id,item.versionId){mutableStateOf(bundle!=null)}
-    val network=if(bundle!=null)bundle.drive.state.collectAsState().value.network else app.tgdrive.data.TelegramNetwork.UNKNOWN
+    val network=if(bundle!=null)bundle.drive.state.collectAsStateWithLifecycle().value.network else app.tgdrive.data.TelegramNetwork.UNKNOWN
     LaunchedEffect(network){if(network==app.tgdrive.data.TelegramNetwork.READY&&failed&&retry<2)retry++}
-    val bitmap by produceState<android.graphics.Bitmap?>(null,item.id,item.versionId,bundle,retry) {
-        failed=false;loading=bundle!=null
-        try {if(bundle!=null)value=bundle.library.thumbnails.read(item,refresh=retry>0)}
+    val request=remember(item.id,item.versionId,bundle,retry){Any()}
+    val bitmap by produceState<Pair<Any,android.graphics.Bitmap?>?>(null,request) {
+        value=null;failed=false;loading=bundle!=null
+        try {if(bundle!=null)value=request to bundle.library.thumbnails.read(item,refresh=retry>0)}
         catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){failed=true}
         finally{loading=false}
     }
-    val thumb=bitmap
+    val thumb=bitmap?.takeIf{it.first===request}?.second
     val reveal by androidx.compose.animation.core.animateFloatAsState(if(thumb!=null)1f else 0f,androidx.compose.animation.core.tween(180),label="thumbnail-reveal")
     if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,if(square)modifier.then(Modifier.graphicsLayer { alpha=reveal }) else modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
     else Box(modifier,contentAlignment=Alignment.Center) {

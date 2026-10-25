@@ -8,6 +8,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +26,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.*
 import app.tgdrive.R
 import app.tgdrive.data.*
 import java.text.DateFormat
@@ -160,27 +164,44 @@ fun DriveScreen(
         dismissButton = { TextButton(onClick = { signOut = false }) { Text(stringResource(R.string.cancel)) } })
 }
 
+internal fun authStepForward(from:LoginStep,to:LoginStep):Boolean = when(to) {
+    LoginStep.CONFIGURE -> false
+    LoginStep.PHONE -> from !in setOf(LoginStep.CODE,LoginStep.PASSWORD,LoginStep.OTHER_DEVICE)
+    LoginStep.CODE -> from != LoginStep.PASSWORD
+    else -> true
+}
+
+internal fun validApiCredentials(id:String,hash:String)=id.trim().toIntOrNull()?.let{it>0}==true&&hash.trim().matches(Regex("[0-9a-fA-F]{32}"))
+
 @Composable
 fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (String) -> Unit, reconnect: () -> Unit, editCredentials: () -> Unit, modifier: Modifier = Modifier,changePhone:()->Unit={},resendCode:()->Unit={}) {
-    var apiId by remember { mutableStateOf("") }
+    var apiId by rememberSaveable { mutableStateOf("") }
     var apiHash by remember { mutableStateOf("") }
     val uri = LocalUriHandler.current
+    val focus = LocalFocusManager.current
+    var phone by rememberSaveable { mutableStateOf("") }
     Column(modifier.fillMaxSize().background(DriveStyle.SignInCanvas).imePadding().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp), horizontalAlignment=Alignment.CenterHorizontally, verticalArrangement=Arrangement.spacedBy(20.dp)) {
             Icon(DriveIcons.CloudQueue, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
             Text("Welcome to TG Drive", style=MaterialTheme.typography.headlineLarge, textAlign=androidx.compose.ui.text.style.TextAlign.Center)
         }
-        androidx.compose.animation.AnimatedContent(state.login, transitionSpec={horizontalNavigation(targetState != LoginStep.CONFIGURE)},label="sign-in-step") { step ->
-            var value by remember(step) { mutableStateOf("") }
+        androidx.compose.animation.AnimatedContent(state.login, transitionSpec={horizontalNavigation(authStepForward(initialState,targetState))},label="sign-in-step") { step ->
+            var secret by remember(step) { mutableStateOf("") }
+            val value = if(step==LoginStep.PHONE)phone else secret
+            val submit = { if(value.isNotBlank()&&!state.busy){focus.clearFocus();login(value)} }
         Column(Modifier.fillMaxWidth(), verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                state.authError?.let { Text(it, modifier=Modifier.semantics{liveRegion=LiveRegionMode.Polite}, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 when (step) {
                     LoginStep.CONFIGURE -> {
                         Text(stringResource(R.string.configure), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(R.string.configure_body), style = MaterialTheme.typography.bodyMedium)
-                        DriveTextField(apiId, { apiId = it }, enabled = !state.busy, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
-                        DriveTextField(apiHash, { apiHash = it }, enabled = !state.busy, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                        DriveButton(onClick = { configure(apiId.trim(), apiHash.trim()) }, enabled = apiId.isNotBlank() && apiHash.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                        DriveTextField(apiId, { apiId = it }, enabled = !state.busy, label = { Text("API ID") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number,imeAction=ImeAction.Next), modifier = Modifier.fillMaxWidth(),
+                            isError=apiId.isNotEmpty()&&(apiId.trim().toIntOrNull()?:0)<=0,
+                            supportingText=if(apiId.isNotEmpty()&&(apiId.trim().toIntOrNull()?:0)<=0)({Text("Enter a positive numeric API ID.")})else null)
+                        DriveTextField(apiHash, { apiHash = it }, enabled = !state.busy, label = { Text("API hash") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,autoCorrectEnabled=false,imeAction=ImeAction.Done), keyboardActions=KeyboardActions(onDone={if(validApiCredentials(apiId,apiHash)&&!state.busy){focus.clearFocus();configure(apiId.trim(),apiHash.trim())}}), modifier = Modifier.fillMaxWidth(),
+                            isError=apiHash.isNotEmpty()&&!apiHash.trim().matches(Regex("[0-9a-fA-F]{32}")),
+                            supportingText=if(apiHash.isNotEmpty()&&!apiHash.trim().matches(Regex("[0-9a-fA-F]{32}")))({Text("Enter the 32-character API hash from my.telegram.org.")})else null)
+                        DriveButton(onClick = { focus.clearFocus();configure(apiId.trim(), apiHash.trim()) }, enabled = validApiCredentials(apiId,apiHash) && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         TextButton(onClick = { uri.openUri("https://my.telegram.org/apps") }) { Text(stringResource(R.string.get_api)) }
                     }
@@ -188,10 +209,11 @@ fun AuthPanel(state: DriveState, configure: (String, String) -> Unit, login: (St
                         val label = when (step) { LoginStep.PHONE -> R.string.phone; LoginStep.CODE -> R.string.code; else -> R.string.password }
                         Text(stringResource(R.string.connect_telegram), style = MaterialTheme.typography.titleLarge)
                         Text(stringResource(when (step) { LoginStep.PHONE -> R.string.phone_body; LoginStep.CODE -> R.string.code_body; else -> R.string.password_body }))
-                        DriveTextField(value, { value = it }, label = { Text(stringResource(label)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        DriveTextField(value, { if(step==LoginStep.PHONE)phone=it else secret=it }, enabled=!state.busy, label = { Text(stringResource(label)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                             visualTransformation = if (step == LoginStep.PASSWORD) PasswordVisualTransformation() else VisualTransformation.None,
-                            keyboardOptions = KeyboardOptions(keyboardType = when(step) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password }))
-                        DriveButton(onClick = { login(value) }, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
+                            keyboardOptions = KeyboardOptions(keyboardType = when(step) { LoginStep.PHONE -> KeyboardType.Phone; LoginStep.CODE -> KeyboardType.Number; else -> KeyboardType.Password },autoCorrectEnabled=false,imeAction=ImeAction.Done),
+                            keyboardActions=KeyboardActions(onDone={submit()}))
+                        DriveButton(onClick = submit, enabled = value.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.continue_label)) }
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         if(step==LoginStep.CODE){
                             val remaining by produceState(0L,state.resendAt){while(true){this.value=((state.resendAt-System.currentTimeMillis()+999)/1000).coerceAtLeast(0);if(this.value==0L)break;kotlinx.coroutines.delay(1000)}}

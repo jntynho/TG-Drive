@@ -13,13 +13,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.tgdrive.SessionBundle
 import kotlinx.coroutines.*
 import org.drinkless.tdlib.TdApi
 
 @Composable
 internal fun AccountAvatar(bundle:SessionBundle?,name:String,modifier:Modifier=Modifier) {
-    val auth=bundle?.drive?.state?.collectAsState()?.value
+    val auth=bundle?.drive?.state?.collectAsStateWithLifecycle()?.value
     val account=auth?.accountId?:0L
     val photo=auth?.avatarFileId?:0
     val bitmap by produceState<Bitmap?>(null,bundle,account,photo) {

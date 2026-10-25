@@ -32,7 +32,7 @@ class SessionBundle(context: Context, val profile: AccountProfile, allowAccount:
         library.changed = wake
         transfers.wake = wake
         transfers.external = { task -> if (task.kind == TaskKind.OCR) DocumentTools(library).recognize(task) else connections.execute(task) }
-        transfers.completed = { task -> backups.onCompleted(task); connections.forget(task); library.maintainCache() }
+        transfers.completed = { task -> backups.onCompleted(task); connections.forget(task) }
     }
 }
 

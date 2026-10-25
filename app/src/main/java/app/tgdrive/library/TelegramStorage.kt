@@ -2,6 +2,7 @@ package app.tgdrive.library
 
 import app.tgdrive.data.TelegramDrive
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.drinkless.tdlib.TdApi
@@ -29,19 +30,33 @@ class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSend
     suspend fun sendDocument(source: File, caption: String, thumbnail:File?=null, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {
         val account=account()
         var nativeId=0
+        var acknowledged=false
         try {
         val uploaded=sender.content {
             var file=bound(account){session.call(TdApi.PreliminaryUploadFile(TdApi.InputFileLocal(source.absolutePath),TdApi.FileTypeDocument(),16))} as TdApi.File
             nativeId=file.id
             currentCoroutineContext()[NativeFileObserver]?.started?.invoke(file.id)
-            withTimeout(60*60*1000L) {
-                while(!file.remote.isUploadingCompleted) {
-                    ensureActive();sender.checkAllowed()
-                    verify(account)
-                    check(file.remote.isUploadingActive){"Telegram stopped the content upload. Retry to reconcile it."}
-                    delay(250)
-                    file=bound(account){session.call(TdApi.GetFile(file.id))} as TdApi.File
-                }
+            if(!file.remote.isUploadingCompleted)coroutineScope {
+                val changes=Channel<TdApi.File>(Channel.CONFLATED)
+                val subscription=launch(start=CoroutineStart.UNDISPATCHED){session.events.collect{update->
+                    if(update is TdApi.UpdateFile&&update.file.id==nativeId)changes.trySend(update.file)
+                }}
+                try{
+                    // Subscribe before refreshing to cover an update received before PreliminaryUploadFile returned.
+                    file=bound(account){session.call(TdApi.GetFile(nativeId))} as TdApi.File
+                    withTimeout(60*60*1000L){
+                        var inactiveSince=0L
+                        while(!file.remote.isUploadingCompleted){
+                            ensureActive();sender.checkAllowed();verify(account)
+                            if(file.remote.isUploadingActive)inactiveSince=0L else {
+                                if(inactiveSince==0L)inactiveSince=android.os.SystemClock.elapsedRealtime()
+                                check(android.os.SystemClock.elapsedRealtime()-inactiveSince<30_000){"Telegram stopped the content upload. Retry to reconcile it."}
+                            }
+                            // Events are immediate; the local GetFile fallback only repairs dropped/missing updates.
+                            file=withTimeoutOrNull(1000){changes.receive()}?:bound(account){session.call(TdApi.GetFile(nativeId))} as TdApi.File
+                        }
+                    }
+                }finally{subscription.cancelAndJoin();changes.close()}
             }
             file
         }
@@ -55,11 +70,14 @@ class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSend
             chatId = session.savedMessagesId
             inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileId(uploaded.id), preview, true), TdApi.FormattedText(caption, emptyArray()))
         })} as TdApi.Message
-        bound(account){pending(first);session.awaitSent(first)}
+        bound(account){pending(first);session.awaitSent(first)}.also{acknowledged=true}
         }
         } finally {
             // Release only this preliminary upload. Never delete acknowledged messages or another account's native ID.
-            if(nativeId!=0&&session.state.value.accountId==account)withContext(NonCancellable){runCatching{withTimeout(5_000){session.call(TdApi.CancelPreliminaryUploadFile(nativeId))}}}
+            if(nativeId!=0&&session.state.value.accountId==account)withContext(NonCancellable){runCatching{
+                if(acknowledged)session.releaseCompletedUpload(nativeId,account)
+                else withTimeout(5_000){session.call(TdApi.CancelPreliminaryUploadFile(nativeId))}
+            }}
         }
     }
     suspend fun sendText(text: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {

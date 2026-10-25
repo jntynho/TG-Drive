@@ -80,7 +80,7 @@ Files also support Trash and restore, content versions, Android sharing, documen
 | --- | --- | --- | --- |
 | Recent uploads, storage overview and shortcuts to all files and backups | Photos and videos, thumbnail grid, search and sorting | Songs and recordings, artwork and playback | Accounts, transfers, storage, library recovery and privacy |
 
-See the [implementation details and limits](docs/IMPLEMENTATION_STATUS.md) for the broader feature inventory, and the [0.9 correction report](docs/UI-UX-0.9.ar.md) for the latest audit work and validation boundaries.
+See the [implementation details and limits](docs/IMPLEMENTATION_STATUS.md) for the broader feature inventory, the [full UI review](docs/UI-UX-SKILL-REVIEW.ar.md), and the [upload audit](docs/UPLOAD-0.10.ar.md) for current corrections and validation boundaries.
 
 ## Getting started
 
@@ -117,8 +117,10 @@ Read the [security boundaries](docs/SECURITY.md) before relying on encrypted vau
 | [Security](docs/SECURITY.md) | Encryption, credentials, sharing and recovery boundaries |
 | [Testing](docs/TESTING.md) | Checks, device coverage and remaining validation |
 | [Builds and releases](docs/RELEASING.md) | APK variants, signing, CI and upgrade checks |
+| [Upload audit · Arabic](docs/UPLOAD-0.10.ar.md) | Removed delays, source integrity, recovery and Telegram limits |
 | [Upload pipeline](docs/UPLOAD-0.8.md) | Parallel content preparation and coordinated publication |
 | [UI/UX corrections · Arabic](docs/UI-UX-0.9.ar.md) | The 0.9 audit corrections and practical limits |
+| [UI review and fixes · Arabic](docs/UI-UX-SKILL-REVIEW.ar.md) | The full interface review, applied corrections and validation |
 | [Aero Fold artwork](docs/brand/README.md) | Editable SVG layers and adaptive Android icon sizing |
 
 ## Build from source

@@ -4,6 +4,8 @@ package app.tgdrive.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -119,9 +121,7 @@ fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions,
     val shown=media.orEmpty().filter{it.id in visibleIds&&(!gallery||kind=="All"||kind=="Photos"&&it.mime.startsWith("image/")||kind=="Videos"&&it.mime.startsWith("video/"))}
     Column(Modifier.fillMaxSize()) {
         search?.let{HeaderSearchField(it)}
-        if(gallery&&!selecting)Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{onKind(label)},label={Text(label)})}
-        }
+        if(gallery&&!selecting)GalleryFilters(kind,onKind)
         if(!gallery||selecting)Text(if(selecting)"${safeSelected.size} selected"else"${shown.size} audio files",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         val shownIds=shown.mapTo(hashSetOf()){it.id}
         LaunchedEffect(shownIds,media!=null){if(media!=null)onSelection(safeSelected.intersect(shownIds))}
@@ -165,5 +165,11 @@ internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBu
         }
     } else LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=24.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
         items(items,key={it.id}) { item -> NativeFileCard(item,state.local[item.id],state.itemVaults[item.id].orEmpty().isNotEmpty(),false,false,onClick={onPreview(item.id)},onLongClick={onMenu(item.id)},onMenu={onMenu(item.id)},bundle=bundle) }
+    }
+}
+
+@Composable internal fun GalleryFilters(kind:String,onKind:(String)->Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{onKind(label)},label={Text(label)})}
     }
 }

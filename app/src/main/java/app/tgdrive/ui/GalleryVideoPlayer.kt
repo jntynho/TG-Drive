@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.*
@@ -30,6 +31,7 @@ internal fun mediaTime(milliseconds:Long):String {
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable internal fun GalleryVideoPlayer(item:app.tgdrive.library.Item,bundle:SessionBundle,onRetry:()->Unit,controls:Boolean,onToggle:()->Unit,onHide:()->Unit,modifier:Modifier,onOpen:()->Unit={}) {
+    val touchExploration=rememberTouchExploration()
     val context=LocalContext.current
     val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val player=remember(item.versionId){ExoPlayer.Builder(context)
@@ -40,13 +42,14 @@ internal fun mediaTime(milliseconds:Long):String {
     var duration by remember{mutableLongStateOf(0)}
     var buffering by remember{mutableStateOf(true)}
     var playing by remember{mutableStateOf(false)}
+    var ended by remember{mutableStateOf(false)}
     var wantsPlay by rememberSaveable(item.versionId){mutableStateOf(true)}
     var scrub by remember{mutableStateOf<Float?>(null)}
     var speed by remember{mutableStateOf(false)}
     var interaction by remember{mutableIntStateOf(0)}
     var rate by remember{mutableFloatStateOf(1f)}
     val hide by rememberUpdatedState(onHide)
-    val libraryState by bundle.library.state.collectAsState()
+    val libraryState by bundle.library.state.collectAsStateWithLifecycle()
     val account=libraryState.accountId
     fun checkpoint(){val saved=player.currentPosition
         bundle.library.scope.launch(Dispatchers.IO){runCatching{bundle.library.checkAccount(account);bundle.library.db().put("settings","playback:${item.versionId}",saved.toString())}}
@@ -54,7 +57,7 @@ internal fun mediaTime(milliseconds:Long):String {
     DisposableEffect(player) {
         PlaybackService.pause(context)
         val listener=object:Player.Listener {
-            override fun onEvents(p:Player,events:Player.Events){playing=p.isPlaying;buffering=p.playbackState==Player.STATE_BUFFERING;duration=p.duration.takeIf{it>0}?:0}
+            override fun onEvents(p:Player,events:Player.Events){playing=p.isPlaying;ended=p.playbackState==Player.STATE_ENDED;buffering=p.playbackState==Player.STATE_BUFFERING;duration=p.duration.takeIf{it>0}?:0}
             override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){wantsPlay=ready;if(!ready)checkpoint()}
             override fun onPlayerError(e:PlaybackException){buffering=false;error="This video could not be played. Retry or open it in another app."}
         }
@@ -73,7 +76,7 @@ internal fun mediaTime(milliseconds:Long):String {
         var ticks=0
         while(isActive){position=player.currentPosition;if(++ticks%20==0)checkpoint();delay(250)}
     }
-    LaunchedEffect(controls,playing,scrub,speed,interaction){if(controls&&playing&&scrub==null&&!speed){delay(3500);hide()}}
+    LaunchedEffect(controls,playing,scrub,speed,interaction,touchExploration){if(controls&&playing&&scrub==null&&!speed&&!touchExploration){delay(3500);hide()}}
     Box(modifier.background(Color.Black)) {
         AndroidView(factory={PlayerView(it).apply{useController=false;resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT}},update={it.player=player},onRelease={it.player=null},modifier=Modifier.fillMaxSize())
         Box(Modifier.matchParentSize().clickable(onClickLabel=if(controls)"Hide video controls"else"Show video controls",onClick=onToggle))
@@ -91,7 +94,7 @@ internal fun mediaTime(milliseconds:Long):String {
                     modifier=Modifier.fillMaxWidth().semantics{contentDescription="Seek video"},colors=SliderDefaults.colors(thumbColor=Color.White,activeTrackColor=Color.White,inactiveTrackColor=Color.White.copy(alpha=.3f)))
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically) {
                     TextButton({player.seekTo((player.currentPosition-10_000).coerceAtLeast(0));interaction++}){Text("−10s",color=Color.White)}
-                    IconButton({if(player.isPlaying)player.pause()else{if(player.playbackState==Player.STATE_ENDED)player.seekTo(0);player.play()};interaction++},Modifier.padding(horizontal=24.dp).size(56.dp)) {Icon(if(playing)DriveIcons.Pause else DriveIcons.PlayArrow,if(playing)"Pause video"else"Play video",Modifier.size(36.dp),tint=Color.White)}
+                    IconButton({if(player.playWhenReady&&player.playbackState!=Player.STATE_ENDED)player.pause()else{if(player.playbackState==Player.STATE_ENDED)player.seekTo(0);player.play()};interaction++},Modifier.padding(horizontal=24.dp).size(56.dp)) {Icon(if(wantsPlay&&!ended)DriveIcons.Pause else DriveIcons.PlayArrow,if(wantsPlay&&!ended)"Pause video"else if(ended)"Replay video"else"Play video",Modifier.size(36.dp),tint=Color.White)}
                     TextButton({player.seekTo((player.currentPosition+10_000).coerceAtMost(duration.coerceAtLeast(0)));interaction++}){Text("+10s",color=Color.White)}
                 }
             }

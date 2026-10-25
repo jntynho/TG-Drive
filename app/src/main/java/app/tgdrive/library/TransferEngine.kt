@@ -14,6 +14,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.util.concurrent.ConcurrentHashMap
 import java.security.DigestOutputStream
+import java.security.DigestInputStream
+import java.io.FileInputStream
+import java.io.OutputStream
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.drinkless.tdlib.TdApi
@@ -23,9 +26,10 @@ import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScope, private val gateOverride: ((TransferTask) -> Pair<TaskState, String>?)? = null) {
+class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScope, private val gateOverride: ((TransferTask) -> Pair<TaskState, String>?)? = null, private val snapshotLimitBytes:Long=64L*1024*1024) {
     private val context get() = repository.context
     private val runLock = Mutex()
+    private val completionLock=Mutex()
     private class ActiveTransfer {
         var job:Job?=null
         @Volatile var fileId=0
@@ -120,7 +124,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
     }
     suspend fun cancel(id: String) { pause(id); val current=task(id); repository.setTask(current.copy(state = TaskState.CANCELLED, error = "Cancelled by you.")); OptionalConnections(repository).forget(current);if(current.pendingMessageId==0L)withContext(Dispatchers.IO){File(context.filesDir,"transfer-staging/${current.profileId}/${current.id}").deleteRecursively()} }
     suspend fun clearFinished() = withContext(Dispatchers.IO){
-        repository.mutate { db -> db.tasks().filter { it.state in terminal && (it.state==TaskState.COMPLETED||it.pendingMessageId==0L) }.forEach {
+        repository.mutate { db -> db.tasks().filter { (it.state==TaskState.COMPLETED&&it.completionNotified)||(it.state==TaskState.CANCELLED&&it.pendingMessageId==0L) }.forEach {
             File(context.filesDir,"transfer-staging/${it.profileId}/${it.id}").deleteRecursively()
             db.remove("tasks", it.id)
         } }
@@ -139,7 +143,15 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val account = repository.state.value.accountId
         val end = now() + deadlineMillis
         // Reconcile acknowledged metadata before retrying persistent writes.
-        runCatching { repository.sync() }.onFailure { if (it is CancellationException) throw it }
+        val needsRecovery=repository.db().pending().isNotEmpty()||repository.db().tasks().any {
+            it.state !in terminal&&it.state!=TaskState.FAILED&&
+                (it.pendingMessageId!=0L||it.parts.isNotEmpty()||it.sourceSha256.isNotEmpty()||it.state==TaskState.SYNCING_METADATA)
+        }
+        if(needsRecovery)runCatching { repository.sync() }.onFailure { if (it is CancellationException) throw it }
+        // Re-evaluate user/device gates on an explicit restart, rather than preserving an obsolete 60s poll.
+        repository.db().tasks().filter{it.state in setOf(TaskState.WAITING_FOR_WIFI,TaskState.WAITING_FOR_CHARGING,TaskState.WAITING_FOR_NETWORK,TaskState.WAITING_FOR_DEVICE)&&gate(it)==null}.forEach{
+            repository.updateTask(it.id,account){latest->if(latest.state==it.state)latest.copy(nextAttemptAt=0)else latest}
+        }
         supervisorScope {
             val finishedJobs=Channel<String>(Channel.UNLIMITED)
             val running=linkedMapOf<String,Pair<TransferTask,Job>>()
@@ -215,13 +227,14 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                     catch (e: Exception) {
                         repository.checkAccount(account)
                         val current = task(next.id)
-                        if(e is SendCooldownException) {
-                            repository.setTask(current.copy(state=TaskState.RETRY_WAIT,nextAttemptAt=e.until,error="Telegram send limit. Waiting for the account countdown.",speedBytesPerSecond=0))
+                        val deadline=if(e is SendCooldownException)e.until else if(e is app.tgdrive.data.TelegramRequestException)repository.sender.recordRateLimit(e)else null
+                        if(deadline!=null) {
+                            repository.setTask(current.copy(state=TaskState.RETRY_WAIT,nextAttemptAt=deadline,error="Telegram send limit. Waiting for the account countdown.",speedBytesPerSecond=0))
                             return@launch
                         }
                         val attempts = current.attempts + 1
                         val retry = repository.state.value.preferences.autoRetry && attempts < 3 && !permanent(e)
-                        val wait = floodWait(e.message ?: "") ?: (30_000L * (1L shl attempts))
+                        val wait = 2_000L * (1L shl (attempts-1).coerceIn(0,10))
                         repository.setTask(current.copy(state = if (retry) TaskState.RETRY_WAIT else TaskState.FAILED, attempts = attempts,
                             nextAttemptAt = if (retry) now() + wait else 0, error = e.message?.take(240) ?: "Transfer failed.", speedBytesPerSecond = 0))
                     }
@@ -242,56 +255,66 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val legacy=File(directory,"source.snapshot")
         return if(legacy.exists())legacy else File(File(directory,"source"),task.title)
     }
-    /** One pass creates and hashes a private snapshot, at most 64 MiB per active plain upload. */
+    /** A single I/O pass records the whole hash and every plaintext part's hash. */
     private suspend fun prepareSource(initial:TransferTask):Pair<Uri,Pair<String,Long>> {
         var current=task(initial.id);var spec=current.payload.model<UploadSpec>()
+        val chunk=spec.chunkBytes.takeIf{it>0}?:repository.state.value.preferences.chunkMiB.coerceIn(1,1900)*1024L*1024
         val snapshot=snapshotFile(current)
         if(spec.preparedSource&&snapshot.exists()) {
-            require(snapshot.length()==spec.preparedSize&&snapshot.sha256()==spec.preparedHash){"Prepared upload snapshot changed."}
-            return Uri.fromFile(snapshot) to (spec.preparedHash to spec.preparedSize)
+            val checked=snapshot.inputStream().use{digestSource(it,chunk)}
+            require(checked.size==spec.preparedSize&&checked.sha256==spec.preparedHash){"Prepared upload snapshot changed."}
+            repository.setTask(current.copy(payload=spec.copy(chunkBytes=chunk,sourcePartHashes=checked.parts).json()))
+            return Uri.fromFile(snapshot) to (checked.sha256 to checked.size)
         }
         val uri=Uri.parse(current.source)
         fun sourceModified():Long = if(uri.scheme=="file")File(uri.path!!).lastModified()else
             runCatching{androidx.documentfile.provider.DocumentFile.fromSingleUri(context,uri)?.lastModified()?:0}.getOrDefault(0)
         val modified=sourceModified()
         val expected=if(uri.scheme=="file")File(uri.path!!).length()else context.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()&&!it.isNull(0))it.getLong(0)else -1}?:-1
+        require(expected<0||expected<=chunk*128){"This upload exceeds the 128-part safety limit. Choose a larger supported part size or divide the source."}
         val keep=synchronized(snapshotReservations) {
             val needed=expected.coerceAtLeast(0)*2
-            val allowed=current.vaultId.isEmpty()&&expected in 1..64L*1024*1024&&
+            val allowed=current.vaultId.isEmpty()&&expected in 1..snapshotLimitBytes&&
                 context.filesDir.usableSpace>snapshotReservations.values.sum()+needed+128L*1024*1024
             if(allowed)snapshotReservations[current.id]=needed
             allowed
         }
-        val digest=MessageDigest.getInstance("SHA-256");var size=0L
         val partial=File(snapshot.parentFile,"${snapshot.name}.partial")
         if(keep)snapshot.parentFile!!.mkdirs()
+        var progressAt=0L
         try {
-            val output=if(keep)partial.outputStream()else null
-            output.use{out->context.contentResolver.openInputStream(uri)?.use{input->
-                val buffer=ByteArray(128*1024)
-                while(true){currentCoroutineContext().ensureActive();val n=input.read(buffer);if(n<0)break;size+=n;digest.update(buffer,0,n);out?.write(buffer,0,n)
-                    if(keep)require(size<=expected){"Source changed during preparation."}
-                }
-            }?:error("Source permission is unavailable. Select the file again.")}
-            val hash=digest.digest().joinToString(""){"%02x".format(it)}
-            require(modified<=0 || sourceModified()==modified){"Source changed during preparation. Retry when editing has finished."}
+            val fingerprint=(if(keep)partial.outputStream()else null).use{out->
+                context.contentResolver.openInputStream(uri)?.use{input->digestSource(input,chunk,out){read->
+                    if(keep)require(read<=expected){"Source changed during preparation."}
+                    val time=now()
+                    if(time-progressAt>=800){progressAt=time;repository.updateTask(current.id,current.accountId){latest->
+                        if(latest.state==TaskState.PREPARING)latest.copy(total=expected.coerceAtLeast(read),done=read)else latest
+                    }}
+                }}?:error("Source permission is unavailable. Select the file again.")
+            }
+            require(modified<=0||sourceModified()==modified){"Source changed during preparation. Retry when editing has finished."}
             repository.checkAccount(current.accountId)
             current=task(initial.id);spec=current.payload.model<UploadSpec>()
-            spec=spec.copy(sourceModifiedAt=modified,sourceSize=size)
-            repository.setTask(current.copy(payload=spec.json()))
+            spec=spec.copy(chunkBytes=chunk,sourceModifiedAt=modified,sourceSize=fingerprint.size,sourcePartHashes=fingerprint.parts)
+            repository.setTask(current.copy(payload=spec.json(),done=0))
             if(keep){
-                require(size==expected){"Source changed during preparation."}
+                require(fingerprint.size==expected){"Source changed during preparation."}
                 check(partial.renameTo(snapshot)){"Could not finalize upload snapshot."}
                 repository.checkAccount(current.accountId)
-                current=task(initial.id);spec=current.payload.model<UploadSpec>()
-                repository.setTask(current.copy(payload=spec.copy(preparedSource=true,preparedHash=hash,preparedSize=size).json()))
+                current=task(initial.id)
+                spec=spec.copy(preparedSource=true,preparedHash=fingerprint.sha256,preparedSize=fingerprint.size)
+                repository.setTask(current.copy(payload=spec.json()))
             }
-            return (if(keep)Uri.fromFile(snapshot)else uri) to (hash to size)
+            return (if(keep)Uri.fromFile(snapshot)else uri) to (fingerprint.sha256 to fingerprint.size)
         }finally{partial.delete()}
     }
-    private suspend fun notifyCompleted(task:TransferTask) {
-        try { completed(task);repository.setTask(task.copy(completionNotified=true)) }
-        catch(e:CancellationException){throw e}catch(e:Exception){repository.report(e)}
+    private suspend fun notifyCompleted(task:TransferTask)=completionLock.withLock {
+        val latest=repository.db().get("tasks",task.id)?.model<TransferTask>()?:return@withLock
+        if(latest.state!=TaskState.COMPLETED||latest.completionNotified)return@withLock
+        try {
+            completed(latest)
+            repository.updateTask(latest.id,latest.accountId){current->if(current.state==TaskState.COMPLETED)current.copy(completionNotified=true)else current}
+        }catch(e:CancellationException){throw e}catch(e:Exception){repository.report(e)}
     }
     private fun gate(task: TransferTask): Pair<TaskState, String>? {
         gateOverride?.let { return it(task) }
@@ -317,7 +340,6 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         return null
     }
     private fun permanent(e: Exception) = e is IllegalArgumentException || listOf("checksum", "permission", "not found", "no longer", "Empty", "Unsupported", "space", "different").any { e.message?.contains(it, true) == true }
-    private fun floodWait(message: String): Long? = Regex("(?:FLOOD_WAIT[_ ]|retry after )(\\d+)", RegexOption.IGNORE_CASE).find(message)?.groupValues?.get(1)?.toLongOrNull()?.times(1000)
 
     private suspend fun upload(initial: TransferTask) = withContext(Dispatchers.IO) {
         repository.setTask(task(initial.id).copy(state=TaskState.PREPARING,error=""))
@@ -366,6 +388,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 if (receipt != null) recovered = repository.remote.recoverPending(receipt.messageId)
             }
             if (recovered == null) {
+                val expectedPlain=spec.sourcePartHashes.getOrNull(index)
                 var stagedHash:String?=if(direct)current.sourceSha256 else null
                 if (!sourceFile.exists()) {
                     val temp = File(directory, "part-$index.partial")
@@ -374,17 +397,31 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                             skipExactly(input, index * chunk)
                             val bounded = BoundedInput(input, bytes, currentCoroutineContext()[Job])
                             val digest=MessageDigest.getInstance("SHA-256")
+                            val plainDigest=MessageDigest.getInstance("SHA-256")
                             DigestOutputStream(temp.outputStream(),digest).use { output ->
                                 if (current.vaultId.isEmpty()) check(copyChecked(bounded, output) == bytes) { "Source became shorter during upload." }
-                                else repository.vaults.encrypt(current.vaultId, bounded, output, "${current.itemId}/${current.versionId}/$index")
+                                else repository.vaults.encrypt(current.vaultId, DigestInputStream(bounded,plainDigest), output, "${current.itemId}/${current.versionId}/$index")
                             }
-                            stagedHash=digest.digest().joinToString(""){"%02x".format(it)}
+                            stagedHash=digest.digest().hexDigest()
+                            val actualPlain=if(current.vaultId.isEmpty())stagedHash else plainDigest.digest().hexDigest()
+                            require(expectedPlain==null||actualPlain==expectedPlain){"Source part checksum changed during upload. Select the source again."}
                             require(bounded.remaining == 0L) { "Source became shorter during upload." }
                         }
                         check(temp.renameTo(sourceFile)) { "Could not prepare upload part." }
                     } finally { temp.delete() }
                 }
                 val hash = stagedHash?:sourceFile.sha256()
+                if(current.pendingPartPath==sourceFile.absolutePath&&spec.currentStoredHash.isNotEmpty())
+                    require(hash==spec.currentStoredHash){"Prepared part checksum changed."}
+                if(expectedPlain!=null){
+                    if(current.vaultId.isEmpty())require(hash==expectedPlain){"Source part checksum changed during upload. Select the source again."}
+                    else if(stagedHash==null){
+                        val verified=MessageDigest.getInstance("SHA-256")
+                        val sink=object:OutputStream(){override fun write(b:Int){};override fun write(b:ByteArray,off:Int,len:Int){}}
+                        sourceFile.inputStream().use{input->DigestOutputStream(sink,verified).use{out->repository.vaults.decrypt(current.vaultId,input,out,"${current.itemId}/${current.versionId}/$index")}}
+                        require(verified.digest().hexDigest()==expectedPlain){"Prepared encrypted source part checksum changed."}
+                    }
+                }
                 require(current.vaultId.isNotEmpty()||count!=1||hash==current.sourceSha256){"Source content changed while preparing the upload. Start a new upload."}
                 spec = spec.copy(currentPlainSize = bytes, currentStoredHash = hash)
                 current = current.copy(state = TaskState.TRANSFERRING, pendingPartPath = sourceFile.absolutePath, payload = spec.json(), error = "")
@@ -407,7 +444,13 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                 require(content.caption.text==spec.embeddedCaption&&version.sha256==current.sourceSha256)
                 PartCaption(current.itemId,version.id,0,1,version.size,version.sha256,false)
             }else content.caption.text.removePrefix(CloudCodec.PART).model<PartCaption>()
-            require(caption.versionId == current.versionId && caption.index == index && caption.itemId == current.itemId) { "Pending message does not match this upload." }
+            require(caption.versionId==current.versionId&&caption.index==index&&caption.itemId==current.itemId&&caption.count==count&&caption.plainSize==bytes&&caption.encrypted==current.vaultId.isNotEmpty()) { "Pending message does not match this upload." }
+            val originalPartHash=spec.sourcePartHashes.getOrNull(index)
+            if(current.vaultId.isEmpty()){
+                require(content.document.document.size==bytes){"Pending document size differs from the source."}
+                require(originalPartHash==null||caption.storedSha256==originalPartHash){"Pending document source checksum differs."}
+            }
+            if(current.pendingPartPath==sourceFile.absolutePath&&spec.currentStoredHash.isNotEmpty())require(caption.storedSha256==spec.currentStoredHash){"Pending document stored checksum differs."}
             val part = Part(recovered.id, index, bytes, content.document.document.size, caption.storedSha256, current.vaultId.isNotEmpty())
             val pace=repository.state.value.preferences.uploadPaceKiB
             spec=task(initial.id).payload.model<UploadSpec>().copy(paceUntil=if(pace>0)now()+maxOf(0,part.storedSize*1000/(pace*1024L)-(now()-sendStarted))else 0)
@@ -445,7 +488,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val version = Version(current.versionId, item.id, current.total, current.sourceSha256, current.parts, thumbnail=spec.thumbnail)
         if(spec.embeddedCaption.isNotEmpty())repository.saveEmbeddedUpload(spec.embeddedCaption,current.parts.single(),current.source,current.accountId)
         else if (previous?.versionId != version.id) repository.saveUploaded(item, version, current.vaultId, current.source, current.accountId)
-        repository.setTask(task(initial.id).copy(state=TaskState.SYNCING_METADATA,done=current.total,error="Content uploaded. Saving library information…",speedBytesPerSecond=0))
+        repository.setTask(task(initial.id).copy(state=if(spec.embeddedCaption.isNotEmpty())TaskState.COMPLETED else TaskState.SYNCING_METADATA,done=current.total,error=if(spec.embeddedCaption.isNotEmpty())""else"Content uploaded. Saving library information…",speedBytesPerSecond=0))
         if(repository.db().pending().size>=24)repository.flush()
         directory.deleteRecursively()
     }
@@ -500,6 +543,11 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         }
     }
     private suspend fun skipExactly(input: InputStream, count: Long) {
+        if(count==0L)return
+        if(input is FileInputStream){
+            try{input.channel.position(Math.addExact(input.channel.position(),count));return}
+            catch(_:java.io.IOException){}catch(_:UnsupportedOperationException){}
+        }
         var left = count; val scratch = ByteArray(128 * 1024)
         while (left > 0) { currentCoroutineContext().ensureActive(); val n = input.read(scratch, 0, minOf(left, scratch.size.toLong()).toInt()); require(n > 0) { "Upload source changed." }; left -= n }
     }

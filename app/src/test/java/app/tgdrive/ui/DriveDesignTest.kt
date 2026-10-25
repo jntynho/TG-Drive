@@ -195,4 +195,127 @@ class DriveDesignTest {
         compose.onNodeWithText("Continue").performScrollTo().assertIsEnabled().performClick()
         assertEquals("+212600000000", submitted)
     }
+    @Test fun phoneDraftRestoresButLoginCodesAreNotRetained() {
+        var shown by mutableStateOf(true)
+        var step by mutableStateOf(LoginStep.PHONE)
+        render {
+            val holder=androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+            if(shown)holder.SaveableStateProvider("auth") { AuthPanel(DriveState(login=step),{_,_->},{},{},{}) }
+        }
+        compose.onNodeWithText("Phone number").performTextInput("+212600000000")
+        compose.runOnIdle{shown=false};compose.waitForIdle()
+        compose.runOnIdle{shown=true};compose.waitForIdle()
+        compose.onNodeWithText("+212600000000").assertExists()
+        compose.runOnIdle{step=LoginStep.CODE}
+        compose.onNode(hasSetTextAction()).performTextInput("12345")
+        compose.runOnIdle{shown=false};compose.waitForIdle()
+        compose.runOnIdle{shown=true};compose.waitForIdle()
+        compose.onNodeWithText("12345").assertDoesNotExist()
+    }
+
+    @Test fun busySignInDisablesInputAndImeSubmitsOnlyOnce() {
+        var busy by mutableStateOf(false)
+        var calls=0
+        render{AuthPanel(DriveState(login=LoginStep.PHONE,busy=busy),{_,_->},{calls++;busy=true},{},{})}
+        compose.onNodeWithText("Phone number").performTextInput("+212600000000")
+        compose.onNodeWithText("Phone number").performImeAction()
+        compose.onNodeWithText("Phone number").assertIsNotEnabled()
+        compose.onNodeWithText("Continue").assertIsNotEnabled()
+        assertEquals(1,calls)
+    }
+
+    @Test fun malformedApiCredentialsExplainWhyContinueIsDisabled() {
+        render{AuthPanel(DriveState(login=LoginStep.CONFIGURE),{_,_->},{},{},{})}
+        compose.onNodeWithText("API ID").performTextInput("-1")
+        compose.onNodeWithText("API hash").performTextInput("g".repeat(32))
+        compose.onNodeWithText("Continue").assertIsNotEnabled()
+        compose.onNodeWithText("Enter a positive numeric API ID.").assertExists()
+        compose.onNodeWithText("Enter the 32-character API hash from my.telegram.org.").assertExists()
+        compose.onNodeWithText("API ID").performTextReplacement("12345")
+        compose.onNodeWithText("API hash").performTextReplacement("a".repeat(32))
+        compose.onNodeWithText("Continue").assertIsEnabled()
+    }
+
+    @Test fun folderPickerHidesLockedDestinationsAndNamesVaultRoot() {
+        val folders=listOf(app.tgdrive.library.Folder("public","Public"),app.tgdrive.library.Folder("private","Secret folder"))
+        val state=LibraryState(folders=folders,folderVaults=mapOf("private" to "locked"))
+        render{FolderPicker(state,"",{}){}}
+        compose.onNodeWithText("Public",substring=true).assertExists()
+        compose.onNodeWithText("Secret folder",substring=true).assertDoesNotExist()
+        compose.onNodeWithText("All files").assertExists()
+    }
+
+    @Test fun busyActionRowsAreSemanticallyDisabled() {
+        var clicked=false
+        render{CompositionLocalProvider(LocalDriveActionsEnabled provides false){ActionRow("Rename"){clicked=true}}}
+        compose.onNodeWithText("Rename").assertIsNotEnabled()
+        compose.onNodeWithText("Rename").performTouchInput{click()}
+        assertFalse(clicked)
+    }
+
+    @Test fun audioTransportClampsSeekAndCanPauseWhileBuffering() {
+        var seek=-1L
+        var toggles=0
+        render{Column(Modifier.padding(24.dp)){
+            Text("Morning light.mp3")
+            AudioTransportControls(95_000,100_000,true,true,buffering=true,onToggle={toggles++},onSeek={seek=it})
+        }}
+        compose.onNodeWithContentDescription("Forward 10 seconds").performClick()
+        assertEquals(100_000L,seek)
+        compose.onNodeWithContentDescription("Back 10 seconds").performClick()
+        assertEquals(85_000L,seek)
+        compose.onNodeWithContentDescription("Pause audio").performClick()
+        assertEquals(1,toggles)
+        compose.onNodeWithContentDescription("Seek audio").assertIsEnabled()
+        screenshot("audio-transport")
+    }
+
+    @Test fun largeTextGalleryFiltersStayReachableByScrolling() {
+        var selected="All"
+        render{
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)){
+                Box(Modifier.width(320.dp)){GalleryFilters("All"){selected=it}}
+            }
+        }
+        compose.onNodeWithText("Videos").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals("Videos",selected)
+    }
+
+    @Test fun largeTextHomeKeepsTheAddActionAndDetailsReachable() {
+        render{
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)){
+                Box(Modifier.width(320.dp)){HomeContent(LibraryState(),onOpen={},onPreview={},onMenu={},onUpload={})}
+            }
+        }
+        compose.onNodeWithText("Add files").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("About library storage").performScrollTo().performClick()
+        compose.onNodeWithText("Your indexed library").assertIsDisplayed()
+    }
+
+    @Test fun lockedScreenDisplaysAuthenticationFailureAndKeepsRecoveryReachable() {
+        var unlocks=0
+        var settings=0
+        render{LockedScreen("Device authentication was not completed. Try again.",{unlocks++},{settings++})}
+        compose.onNodeWithText("Device authentication was not completed. Try again.").assertIsDisplayed()
+        compose.onNodeWithText("Unlock TG Drive").performScrollTo().performClick()
+        compose.onNodeWithText("Open Android security settings").performScrollTo().performClick()
+        assertEquals(1,unlocks);assertEquals(1,settings)
+        screenshot("locked")
+    }
+
+    @Test @Config(qualifiers="w640dp-h360dp-xhdpi")
+    fun landscapeLargeTextAuthenticationKeepsInputsAndContinueReachable() {
+        render{
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)){
+                AuthPanel(DriveState(login=LoginStep.CONFIGURE),{_,_->},{},{},{})
+            }
+        }
+        compose.onNodeWithText("API hash").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Continue").performScrollTo().assertIsDisplayed()
+        screenshot("sign-in-landscape-large-text")
+    }
+
 }

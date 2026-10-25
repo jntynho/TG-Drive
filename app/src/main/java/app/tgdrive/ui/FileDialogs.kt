@@ -1,6 +1,8 @@
 package app.tgdrive.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -37,14 +39,14 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
     AlertDialog(onDismissRequest={if(!busy)onDismiss()},title={Text("Choose destination")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
         if(busy)LinearProgressIndicator(Modifier.fillMaxWidth());error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
         LazyColumn(Modifier.heightIn(max=420.dp)){
-            item{TextButton(onClick={onPick("")},enabled=!busy){Icon(DriveIcons.Home,null);Text("Home")}}
-            items(state.folders.filter{it.deletedAt==0L&&it.id!=current&&it.id !in excluded&&(allowedVault==null||state.folderVaults[it.id].orEmpty()==allowedVault)}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)},enabled=!busy){Icon(DriveIcons.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
+            item{TextButton(onClick={onPick("")},enabled=!busy){Icon(DriveIcons.Folder,null);Text(if(allowedVault.isNullOrEmpty())"All files"else "${state.vaults.firstOrNull{it.id==allowedVault}?.label?:"Vault"} root")}}
+            items(state.folders.filter{it.deletedAt==0L&&it.id!=current&&it.id !in excluded&&(state.folderVaults[it.id].orEmpty().isEmpty()||state.folderVaults[it.id] in state.unlockedVaultIds)&&(allowedVault==null||state.folderVaults[it.id].orEmpty()==allowedVault)}.sortedBy{it.name.lowercase()},key={it.id}){folder->TextButton(onClick={onPick(folder.id)},enabled=!busy){Icon(DriveIcons.Folder,null);Spacer(Modifier.width(8.dp));Text(folderPath(folder.id,state.folders))}}
         }
     }},confirmButton={TextButton(onClick=onDismiss,enabled=!busy){Text("Cancel")}})
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun FilterSheet(type:String,minimum:Long,days:Int,order:String,onDismiss:()->Unit,onApply:(String,Long,Int,String)->Unit){
-    var t by remember{mutableStateOf(type)};var m by remember{mutableLongStateOf(minimum)};var d by remember{mutableIntStateOf(days)};var o by remember{mutableStateOf(order)}
+    var t by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(type)};var m by androidx.compose.runtime.saveable.rememberSaveable{mutableLongStateOf(minimum)};var d by androidx.compose.runtime.saveable.rememberSaveable{mutableIntStateOf(days)};var o by androidx.compose.runtime.saveable.rememberSaveable{mutableStateOf(order)}
     ModalBottomSheet(onDismissRequest=onDismiss){Column(Modifier.fillMaxWidth().padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
         SectionTitle("Find the right file")
         Text("Type");LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("all","image","video","audio","document")){v->DriveFilterChip(t==v,{t=v},label={Text(v.replaceFirstChar{it.uppercase()})})}}
@@ -82,6 +84,7 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
         ui.launch{try{withContext(Dispatchers.IO){bundle.library.checkAccount(account);block()};onDismiss()}
             catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"Could not save changes.";bundle.library.report(e)}finally{busy=false}}
     }
+    CompositionLocalProvider(LocalDriveActionsEnabled provides !busy){
     when(mode){
         "rename"->TextInputDialog("Rename file","File name",item.name,onDismiss,busy,error,validate=::nameError){v->perform{bundle.actions.rename(item.id,v)}}
         "tags"->TextInputDialog("Edit tags","Comma-separated tags",item.tags.joinToString(", "),onDismiss,busy,error,allowEmpty=true){v->perform{bundle.actions.tags(item.id,v)}}
@@ -121,7 +124,7 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
                 if(state.local[item.id]?.ocrText?.isNotBlank()==true)ActionRow("Extracted text",icon=DriveIcons.DocumentScanner){mode="text"}
                 if(state.conflicts.any{it.entityId==item.id||it.entityId==item.versionId})ActionRow("Review conflicting changes",icon=DriveIcons.History){mode="conflicts"}
                 if(state.shares.isNotEmpty())ActionRow("Manage exported links",icon=DriveIcons.Link){mode="links"}
-                TextButton({more=!more}){Text(if(more)"Fewer options"else"More options")}
+                TextButton({more=!more},enabled=!busy){Text(if(more)"Fewer options"else"More options")}
                 if(more) {
                 DriveGroup {
                 ActionRow("Verify downloaded content",icon=DriveIcons.Verified){perform{bundle.transfers.enqueue(TaskKind.VERIFY,item);system.startTransfers()}}
@@ -143,6 +146,7 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
             }
             ActionRow("Details and integrity",icon=DriveIcons.Info){mode="info"};Spacer(Modifier.height(12.dp))
         }}
+    }
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -172,8 +176,8 @@ internal fun nameError(value:String):String?=runCatching{cleanName(value)}.excep
         if(form.busy)LinearProgressIndicator(Modifier.fillMaxWidth());form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
         SectionTitle("Existing Saved Messages","Only selected references are imported. Original captions are retained.")
         DriveButton(onClick={val rows=state.incoming.filter{it.messageId in selected};form.run(onDismiss){rows.forEach{bundle.library.importMessage(it,folder)}}},enabled=selected.isNotEmpty()&&!form.busy){Text("Import ${selected.size} selected")}
-        LazyColumn(Modifier.heightIn(max=450.dp)){items(state.incoming,key={it.messageId}){candidate->Row(Modifier.fillMaxWidth().padding(vertical=8.dp)){
-            Checkbox(candidate.messageId in selected,{selected=if(candidate.messageId in selected)selected-candidate.messageId else selected+candidate.messageId});Column(Modifier.weight(1f)){Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
+        LazyColumn(Modifier.heightIn(max=450.dp)){items(state.incoming,key={it.messageId}){candidate->Row(Modifier.fillMaxWidth().heightIn(min=56.dp).toggleable(candidate.messageId in selected,enabled=!form.busy,role=Role.Checkbox){value->selected=if(value)selected+candidate.messageId else selected-candidate.messageId}.padding(vertical=8.dp)){
+            Checkbox(candidate.messageId in selected,null,enabled=!form.busy);Column(Modifier.weight(1f)){Text(candidate.name);Text(formatBytes(candidate.size),style=MaterialTheme.typography.bodySmall)}
         }}}
     }}
 }
@@ -189,7 +193,7 @@ internal fun folderDescendants(id:String,folders:List<Folder>):Set<String> {
     val form=rememberFormAction()
     AlertDialog(onDismissRequest={if(!form.busy)onDismiss()},title={Text("Extracted text")},text={Column {
         SelectionContainer{Text("Select text to copy, or correct it below.",style=MaterialTheme.typography.bodySmall)}
-        DriveTextField(text,{if(it.length<=500_000)text=it},enabled=!form.busy,modifier=Modifier.fillMaxWidth().heightIn(min=180.dp,max=360.dp))
+        DriveTextField(text,{if(it.length<=500_000)text=it},enabled=!form.busy,modifier=Modifier.fillMaxWidth().heightIn(min=180.dp,max=360.dp),label={Text("Extracted text")})
         form.error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
     }},confirmButton={TextButton(enabled=!form.busy,onClick={form.run(onDismiss){bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))}}){Text("Save")}},dismissButton={TextButton(enabled=!form.busy,onClick=onDismiss){Text("Done")}})
 }

@@ -27,6 +27,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -78,7 +79,7 @@ import kotlin.math.min
     var editText by androidx.compose.runtime.saveable.rememberSaveable(item.versionId){mutableStateOf(false)}
     var menu by androidx.compose.runtime.saveable.rememberSaveable(item.versionId){mutableStateOf(false)}
     var retry by remember(item.versionId){mutableIntStateOf(0)}
-    val state by bundle.library.state.collectAsState()
+    val state by bundle.library.state.collectAsStateWithLifecycle()
     LaunchedEffect(item.versionId,retry,active){
         if(!active)return@LaunchedEffect
         error=null;file=null
@@ -118,7 +119,7 @@ import kotlin.math.min
                 isPhoto -> ImagePreview(file!!,bundle,Modifier.fillMaxSize(),onTap={onChrome(!chrome)},onZoom=onZoom,onError={onChrome(true)},onOpen={system.openExternal(item)})
                 else -> Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     when {
-                        item.mime=="application/pdf" -> PdfPreview(file!!,Modifier.weight(1f))
+                        item.mime=="application/pdf" -> PdfPreview(file!!,Modifier.weight(1f),onOpen={system.openExternal(item)})
                         item.mime.startsWith("text/")||item.name.endsWith(".json",true)||item.name.endsWith(".csv",true) -> TextPreview(file!!)
                         else -> Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                             Icon(fileIcon(item.mime),null,Modifier.size(64.dp),tint=MaterialTheme.colorScheme.primary)
@@ -145,7 +146,7 @@ import kotlin.math.min
     if(menu)FileActionsSheet(item,state,bundle,system,onDismiss={menu=false},onPreview={menu=false;onChrome(true)})
     if(editText){
         var text by remember(item.id){mutableStateOf(state.local[item.id]?.ocrText.orEmpty())}
-        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp))},confirmButton={TextButton({bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save")}},dismissButton={TextButton({editText=false}){Text("Cancel")}})
+        AlertDialog(onDismissRequest={editText=false},title={Text("Correct extracted text")},text={DriveTextField(text,{if(it.length<=500_000)text=it},modifier=Modifier.fillMaxWidth().heightIn(min=200.dp,max=400.dp),label={Text("Extracted text")})},confirmButton={TextButton({bundle.actions.run{bundle.library.setLocal(bundle.library.db().local(item.id).copy(ocrText=text))};editText=false}){Text("Save")}},dismissButton={TextButton({editText=false}){Text("Cancel")}})
     }
 }
 
@@ -170,10 +171,11 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
     if(image!=null)GalleryZoomImage(image,modifier,onTap,{zoom->if(zoom)detailed=true;onZoom(zoom)},contentKey=file)
     else Box(modifier,contentAlignment=Alignment.Center){if(loadError)Column(Modifier.padding(24.dp)){Text("This image cannot be displayed.");TextButton(onOpen){Text("Open in another app")}}else CircularProgressIndicator()}
 }
-@Composable private fun PdfPreview(file:File,modifier:Modifier){
-    var page by remember(file){mutableIntStateOf(0)};var pages by remember(file){mutableIntStateOf(1)};var jump by remember{mutableStateOf(false)}
+@Composable private fun PdfPreview(file:File,modifier:Modifier,onOpen:()->Unit){
+    var page by androidx.compose.runtime.saveable.rememberSaveable(file.path){mutableIntStateOf(0)};var pages by remember(file){mutableIntStateOf(1)};var jump by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf<String?>(null)}
     val bitmap by produceState<Bitmap?>(null,file,page){
+        value=null;error=null
         value=withContext(Dispatchers.IO){
             try{ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY).use{fd->PdfRenderer(fd).use{pdf->
                 pages=pdf.pageCount
@@ -182,10 +184,10 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
         }
     }
     Column(modifier.fillMaxWidth().padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){
-        error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+        error?.let{Text(it,color=MaterialTheme.colorScheme.error);TextButton(onOpen){Text("Open in another app")}}
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){TextButton(onClick={page--},enabled=page>0){Text("Previous")};TextButton({jump=true}){Text("${page+1} / $pages")};TextButton(onClick={page++},enabled=page+1<pages){Text("Next")}}
         val image=bitmap
-        if(image!=null)GalleryZoomImage(image,Modifier.fillMaxWidth().weight(1f),{},{}) else if(error==null)CircularProgressIndicator()
+        if(image!=null)GalleryZoomImage(image,Modifier.fillMaxWidth().weight(1f),{},{},contentKey=file.path to page) else if(error==null)CircularProgressIndicator()
     }
     if(jump)TextInputDialog("Go to page","Page number",(page+1).toString(),{jump=false},validate={if(it.toIntOrNull() in 1..pages)null else "Enter a page from 1 to $pages."}){page=it.toInt()-1;jump=false}
 }
@@ -232,8 +234,7 @@ internal fun boundImagePan(pan:Offset,scale:Float,viewport:IntSize,image:IntSize
             Spacer(Modifier.height(20.dp))
             Text(item.name,style=MaterialTheme.typography.titleMedium,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
             Spacer(Modifier.height(16.dp))
-        AndroidView(factory={PlayerView(it).apply{useController=true;controllerShowTimeoutMs=3000;setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT;setKeepContentOnPlayerReset(false)}},
-            update={it.player=if(matching)controller else null},onRelease={it.player=null},modifier=Modifier.fillMaxWidth().height(160.dp))
+            NativeAudioTransport(controller,matching&&error==null)
         }
         if(!matching&&error==null)CircularProgressIndicator()
         error?.let{text->Column(Modifier.background(MaterialTheme.colorScheme.background).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text(text);DriveButton(onRetry){Text("Retry playback")};TextButton(onOpen){Text("Open in another app")}}}

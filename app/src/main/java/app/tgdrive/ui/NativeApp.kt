@@ -13,6 +13,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.*
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.RectangleShape
@@ -45,9 +48,11 @@ internal val nativeTabSaver = Saver<NativeTab,Any>(save={it.name},restore={saved
     navigationTabs.firstOrNull{it.name==name} ?: NativeTab.HOME
 })
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class,ExperimentalLayoutApi::class)
 @Composable
 fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,requestedRoute:String="",onRouteConsumed:()->Unit={}) {
+    val focusManager=LocalFocusManager.current
+    val keyboardVisible=WindowInsets.isImeVisible
     val auth by bundle.drive.state.collectAsStateWithLifecycle()
     val state by bundle.library.state.collectAsStateWithLifecycle()
     val profiles by pool.profiles.collectAsStateWithLifecycle()
@@ -75,6 +80,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
     LaunchedEffect(requestedRoute,state.loaded){if(state.loaded&&requestedRoute.isNotEmpty()){
         if(requestedRoute in setOf("transferSettings","vaultSettings")){tab=NativeTab.SETTINGS;settingsRoute=if(requestedRoute=="vaultSettings")"vaults"else"transfers"}else{tab=NativeTab.HOME;homeRoute=if(requestedRoute=="backups")"backups"else"activity"};onRouteConsumed()
     }}
+    LaunchedEffect(tab,homeRoute,settingsRoute,previewId){focusManager.clearFocus()}
     val pageState = rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.messageRevision,state.notice,state.error,auth.error) {
@@ -116,23 +122,23 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
                 !signingIn && tab==NativeTab.SETTINGS && settingsRoute!="home" -> {{settingsRoute=settingsParent(settingsRoute)}}
                 else -> null
             }
-            Scaffold(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
+            Scaffold(modifier=Modifier.imePadding(),containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
                 snackbarHost={SnackbarHost(snackbar)}, topBar={
                     DriveAppHeader(headerTitle,back,actions={
                         if(!signingIn&&state.loaded&&(tab==NativeTab.GALLERY||tab==NativeTab.AUDIO)) {
                             MediaSortMenu(tab==NativeTab.GALLERY,if(tab==NativeTab.GALLERY)gallerySort else audioSort){if(tab==NativeTab.GALLERY)gallerySort=it else audioSort=it}
                             if(tab==NativeTab.GALLERY)TextButton({gallerySelecting=!gallerySelecting;gallerySelected=emptyList()}){Text(if(gallerySelecting)"Done"else"Select")}
                         }
-                    })
-            },bottomBar={if(auth.login==LoginStep.READY&&state.loaded)Column{AudioMiniPlayer(bundle){previewId=it};DriveNavigationBar(tab,{selected->if(selected==tab){if(selected==NativeTab.HOME){homeRoute="home";homeQuery=""}else if(selected==NativeTab.SETTINGS){settingsRoute="home";settingsQuery=""}};tab=selected},state.tasks.any{it.state==TaskState.FAILED})}}){padding->
+                    },containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background)
+            },bottomBar={if(auth.login==LoginStep.READY&&state.loaded&&!keyboardVisible)Column{AudioMiniPlayer(bundle){previewId=it};DriveNavigationBar(tab,{selected->focusManager.clearFocus();if(selected==tab){if(selected==NativeTab.HOME){homeRoute="home";homeQuery=""}else if(selected==NativeTab.SETTINGS){settingsRoute="home";settingsQuery=""}};tab=selected},state.tasks.any{it.state==TaskState.FAILED})}}){padding->
                 when {
                     auth.login!=LoginStep.READY->Column(Modifier.fillMaxSize().padding(padding)){
                         TextButton({accountSheet=true},Modifier.align(Alignment.End).padding(end=12.dp)){Text("Manage accounts")}
                         AuthPanel(auth,bundle.drive::configure,bundle.drive::login,bundle.drive::reconnect,bundle.drive::editConfiguration,Modifier.weight(1f),bundle.drive::changePhoneNumber,bundle.drive::resendCode)
                     }
-                    !state.loaded->Column(Modifier.fillMaxSize().padding(padding).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
+                    !state.loaded->Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally){
                         val openError=state.error?:auth.error
-                        if(openError==null){CircularProgressIndicator();Spacer(Modifier.height(18.dp));Text("Opening your private library…")}else{Text(openError,color=MaterialTheme.colorScheme.error);Text("Your Telegram files have not been deleted.");DriveButton(onClick={bundle.library.retryInitialization()}){Text("Retry opening library")}}
+                        if(openError==null){CircularProgressIndicator(Modifier.semantics{contentDescription="Opening your private library"});Spacer(Modifier.height(18.dp));Text("Opening your private library…")}else{Text(openError,color=MaterialTheme.colorScheme.error);Text("Your Telegram files have not been deleted.");DriveButton(onClick={bundle.library.retryInitialization()}){Text("Retry opening library")}}
                     }
                     else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={horizontalNavigation(targetState.ordinal > initialState.ordinal)},label="navigation") { page ->
                         pageState.SaveableStateProvider(page){when(page){
@@ -147,9 +153,9 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
         }
     }
     if(accountSheet)ModalBottomSheet(onDismissRequest={accountSheet=false}){
-        Column(Modifier.fillMaxWidth().padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             Text("Your accounts",style=MaterialTheme.typography.headlineSmall)
-            profiles.forEach { profile->DriveCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth()){
+            profiles.forEach { profile->DriveCard(onClick={pool.switch(profile.id);accountSheet=false},modifier=Modifier.fillMaxWidth().semantics{selected=profile.id==bundle.profile.id;role=Role.RadioButton}){
                 Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){AccountAvatar(pool.bundle(profile.id),profile.label);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(profile.label);Text(if(profile.userId==0L)"Not signed in"else"Account · ${profile.userId.toString().takeLast(4)}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};if(profile.id==bundle.profile.id)Icon(DriveIcons.Check,null,tint=MaterialTheme.colorScheme.primary)}
             }}
             profiles.filter{it.userId==0L&&it.id!=bundle.profile.id}.forEach{profile->
@@ -174,15 +180,15 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
 }
 
 @Composable fun SectionTitle(title: String, subtitle: String? = null) {
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,style=MaterialTheme.typography.headlineMedium);if(subtitle!=null)Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,modifier=Modifier.semantics{heading()},style=MaterialTheme.typography.headlineMedium);if(subtitle!=null)Text(subtitle,style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
 }
 @Composable fun InfoCard(title: String, text: String, icon: ImageVector = DriveIcons.Info) {
     Card(shape=DriveStyle.CardShape,colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceContainerLow)){
         Row(Modifier.fillMaxWidth().padding(20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {Icon(icon,null,tint=MaterialTheme.colorScheme.onSurfaceVariant);Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){Text(title,style=MaterialTheme.typography.titleSmall);Text(text,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
     }
 }
-@Composable fun ActionRow(title: String, subtitle: String = "", icon: ImageVector=DriveIcons.ChevronRight, onClick: ()->Unit) {
-    Surface(onClick=onClick,shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=if(LocalDriveGroup.current)56.dp else 64.dp).padding(horizontal=20.dp,vertical=if(LocalDriveGroup.current)14.dp else 17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
+@Composable fun ActionRow(title: String, subtitle: String = "", icon: ImageVector=DriveIcons.ChevronRight, enabled:Boolean=true, onClick: ()->Unit) {
+    Surface(onClick=onClick,enabled=enabled&&LocalDriveActionsEnabled.current,modifier=Modifier.alpha(if(enabled&&LocalDriveActionsEnabled.current)1f else .45f),shape=if(LocalDriveGroup.current)RectangleShape else DriveStyle.CardShape,color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().heightIn(min=if(LocalDriveGroup.current)56.dp else 64.dp).padding(horizontal=20.dp,vertical=if(LocalDriveGroup.current)14.dp else 17.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(16.dp)){
         Icon(icon,null,tint=MaterialTheme.colorScheme.onSurface,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(title,style=MaterialTheme.typography.titleSmall);if(subtitle.isNotBlank())Text(subtitle,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(DriveIcons.KeyboardArrowRight,null,Modifier.size(20.dp),tint=MaterialTheme.colorScheme.onSurfaceVariant)
     }}
 }
@@ -190,7 +196,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
 @Composable
 internal fun DriveNavigationBar(tab: NativeTab, onSelect: (NativeTab) -> Unit, failedTransfers: Boolean = false) {
     NavigationBar(containerColor=MaterialTheme.colorScheme.background,tonalElevation=0.dp) {
-        navigationTabs.forEach { page -> NavigationBarItem(selected=tab==page,onClick={onSelect(page)},icon={
+        navigationTabs.forEach { page -> NavigationBarItem(selected=tab==page,onClick={onSelect(page)},modifier=Modifier.semantics{if(page==NativeTab.HOME&&failedTransfers)stateDescription="Transfers need attention"},icon={
             BadgedBox(badge={if(page==NativeTab.HOME && failedTransfers) Badge()}){Icon(page.icon,null)}
         },label={Text(page.title,style=MaterialTheme.typography.labelSmall)},colors=NavigationBarItemDefaults.colors(
             selectedIconColor=MaterialTheme.colorScheme.onSurface,selectedTextColor=MaterialTheme.colorScheme.onSurface,

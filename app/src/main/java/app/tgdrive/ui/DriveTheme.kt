@@ -16,6 +16,10 @@ object DriveStyle {
     val SignInCanvas = Color(0xFF050505)
     val Card = Color(0xFF333536)
     val Blue = Color(0xFF73B2FF)
+    val ActionBlue = Color(0xFF0068D9)
+    val OnAction = Color.White
+    val DisabledAction = Color(0xFF123552)
+    val OnDisabledAction = Color(0xFF8A9AA8)
     val PageInset = 16.dp
     val CardShape = RoundedCornerShape(24.dp)
     val PillShape = RoundedCornerShape(50)

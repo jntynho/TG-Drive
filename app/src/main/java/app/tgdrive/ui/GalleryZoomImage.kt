@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
@@ -33,12 +34,18 @@ import androidx.compose.ui.semantics.*
     val decay=rememberSplineBasedDecay<Float>()
     val currentTap by rememberUpdatedState(onTap)
     val currentZoom by rememberUpdatedState(onZoom)
-    LaunchedEffect(Unit){snapshotFlow{scale>1.01f}.collect{currentZoom(it)}}
-    DisposableEffect(Unit){onDispose{currentZoom(false)}}
+    LaunchedEffect(contentKey){snapshotFlow{scale>1.01f}.collect{currentZoom(it)}}
+    DisposableEffect(contentKey){onDispose{currentZoom(false)}}
     LaunchedEffect(viewport){motion?.cancel();pan=boundImagePan(pan,scale,viewport,size)}
-    Box(modifier.clipToBounds().semantics {
+    Box(modifier.clipToBounds().semantics(mergeDescendants=true) {
+        stateDescription="Zoom ${(scale*100).toInt()} percent"
+        onClick(label="Show or hide image controls"){currentTap();true}
         customActions=listOf(CustomAccessibilityAction("Zoom in"){motion?.cancel();scale=(scale*1.5f).coerceAtMost(6f);true},
-            CustomAccessibilityAction("Fit image"){motion?.cancel();scale=1f;pan=Offset.Zero;true})
+            CustomAccessibilityAction("Fit image"){motion?.cancel();scale=1f;pan=Offset.Zero;true},
+            CustomAccessibilityAction("Move image right"){motion?.cancel();pan=boundImagePan(pan+Offset(viewport.width*.25f,0f),scale,viewport,size);true},
+            CustomAccessibilityAction("Move image left"){motion?.cancel();pan=boundImagePan(pan-Offset(viewport.width*.25f,0f),scale,viewport,size);true},
+            CustomAccessibilityAction("Move image down"){motion?.cancel();pan=boundImagePan(pan+Offset(0f,viewport.height*.25f),scale,viewport,size);true},
+            CustomAccessibilityAction("Move image up"){motion?.cancel();pan=boundImagePan(pan-Offset(0f,viewport.height*.25f),scale,viewport,size);true})
     }.onSizeChanged{viewport=it}
         .pointerInput(contentKey,viewport){detectTapGestures(onTap={currentTap()},onDoubleTap={point->
             motion?.cancel()
@@ -46,7 +53,8 @@ import androidx.compose.ui.semantics.*
             val target=if(scale>1.05f)1f else 2.5f
             val center=Offset(viewport.width/2f,viewport.height/2f)
             val toPan=if(target==1f)Offset.Zero else boundImagePan((pan-(point-center))*(target/scale)+(point-center),target,viewport,size)
-            motion=scope.launch{Animatable(0f).animateTo(1f,tween(240,easing=FastOutSlowInEasing)){
+            if(scope.coroutineContext[MotionDurationScale]?.scaleFactor==0f){scale=target;pan=toPan}
+            else motion=scope.launch{Animatable(0f).animateTo(1f,tween(240,easing=FastOutSlowInEasing)){
                 scale=fromScale+(target-fromScale)*value
                 pan=boundImagePan(fromPan+(toPan-fromPan)*value,scale,viewport,size)
             }}
@@ -74,7 +82,7 @@ import androidx.compose.ui.semantics.*
                     }
                 }
             }while(event.changes.any{it.pressed})
-            if(dragged&&!multi&&scale>1.01f) {
+            if(dragged&&!multi&&scale>1.01f&&scope.coroutineContext[MotionDurationScale]?.scaleFactor!=0f) {
                 val velocity=tracker.calculateVelocity()
                 motion=scope.launch {
                     coroutineScope {

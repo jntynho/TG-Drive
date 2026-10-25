@@ -457,6 +457,11 @@ class TelegramDrive internal constructor(
     suspend fun call(function: TdApi.Function<*>, timeout: Long = timeoutMillis): TdApi.Object = withContext(Dispatchers.Main) { request(function, timeout) }
     suspend fun secret(name: String): String? = withContext(Dispatchers.IO) { secure.get(name) }
     suspend fun saveSecret(name: String, value: String) = withContext(Dispatchers.IO) { secure.put(name, value) }
+    /** Release an acknowledged preliminary-upload lease without waiting on a disposable Ok callback. */
+    internal suspend fun releaseCompletedUpload(fileId:Int,owner:Long) = withContext(Dispatchers.Main) {
+        if(state.value.accountId==owner&&owner!=0L)client?.send(TdApi.CancelPreliminaryUploadFile(fileId)) { }
+        Unit
+    }
     suspend fun resolvedSend(id: Long): TdApi.Message? = withContext(Dispatchers.Main) { earlyResults.remove(id)?.getOrThrow() }
     suspend fun awaitSent(message: TdApi.Message): TdApi.Message = withContext(Dispatchers.Main) {
         if (message.sendingState == null) return@withContext message

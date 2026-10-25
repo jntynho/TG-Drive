@@ -3,6 +3,8 @@
 package app.tgdrive.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,8 +32,8 @@ import java.util.Date
         item{FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
             val running=state.tasks.any{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}
             val paused=state.tasks.filter{it.state==TaskState.PAUSED}
-            DriveButton(enabled=paused.isNotEmpty()||!running||state.pendingOperations>0,onClick={bundle.actions.run{paused.forEach{bundle.transfers.retry(it.id)};system.startTransfers()}}){Icon(DriveIcons.PlayArrow,null);Text(if(paused.isNotEmpty())"Resume paused"else if(running)"Transfers running"else if(state.pendingOperations>0)"Finish syncing"else"Start transfers")}
-            TextButton(onClick={bundle.actions.run{bundle.transfers.clearFinished()}}){Text("Clear finished")}
+            DriveButton(enabled=canStartTransfers(state),onClick={bundle.actions.run{paused.forEach{bundle.transfers.retry(it.id)};system.startTransfers()}}){Icon(DriveIcons.PlayArrow,null);Text(if(paused.isNotEmpty())"Resume paused"else if(running)"Transfers running"else if(state.pendingOperations>0)"Finish syncing"else"Start transfers")}
+            TextButton(enabled=state.tasks.any{it.state in setOf(TaskState.COMPLETED,TaskState.CANCELLED)},onClick={bundle.actions.run{bundle.transfers.clearFinished()}}){Text("Clear finished")}
         }}
         if(remaining>0)item{InfoCard("Sending resumes in ${remaining}s","Telegram asked this account to wait. Your uploaded parts and queue are saved.",DriveIcons.CloudSync)}
         item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("All","Active","Failed","Done")){label->DriveFilterChip(filter==label,{filter=label},label={Text(label)})}}}
@@ -87,7 +89,7 @@ import java.util.Date
             LaunchedEffect(rule.enabled){toggle.observe(Preferences(wifiOnly=rule.enabled))}
             DriveCard(Modifier.fillMaxWidth()){
             Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
-                Row(verticalAlignment=Alignment.CenterVertically){Text(if(rule.vaultId.isNotEmpty()&&rule.vaultId !in state.unlockedVaultIds)"Protected backup" else rule.name,Modifier.weight(1f),fontWeight=FontWeight.SemiBold);DriveSwitch(toggle.value.wifiOnly,{enabled->toggle.update{it.copy(wifiOnly=enabled)}})}
+                Row(Modifier.fillMaxWidth().toggleable(toggle.value.wifiOnly,role=Role.Switch){enabled->toggle.update{it.copy(wifiOnly=enabled)}},verticalAlignment=Alignment.CenterVertically){Text(if(rule.vaultId.isNotEmpty()&&rule.vaultId !in state.unlockedVaultIds)"Protected backup" else rule.name,Modifier.weight(1f),fontWeight=FontWeight.SemiBold);DriveSwitch(toggle.value.wifiOnly,null)}
                 Text("Destination: ${folderPath(rule.folderId,state.folders)}",style=MaterialTheme.typography.bodySmall)
                 Text(if(rule.lastScanAt==0L)"Not scanned yet" else "Last scan: ${DateFormat.getDateTimeInstance().format(Date(rule.lastScanAt))}",style=MaterialTheme.typography.bodySmall)
                 Text(if(rule.lastSuccessAt==0L)"No file success recorded yet" else "Last file success: ${DateFormat.getDateTimeInstance().format(Date(rule.lastSuccessAt))}",style=MaterialTheme.typography.bodySmall)
@@ -108,9 +110,14 @@ import java.util.Date
     rescanId?.let{id->ConfirmDialog("Rescan including old content?","This ignores the upload receipt and can bring back content you deliberately removed. It may create additional copies. Normal Scan now is safer.","Rescan all",{rescanId=null}){system.scanBackups(id,true);rescanId=null}}
 }
 
+internal fun canStartTransfers(state:LibraryState):Boolean {
+    val running=state.tasks.any{it.state in setOf(TaskState.PREPARING,TaskState.TRANSFERRING)}
+    return state.tasks.any{it.state==TaskState.PAUSED}||(!running&&(state.pendingOperations>0||state.tasks.any{it.state !in setOf(TaskState.COMPLETED,TaskState.CANCELLED,TaskState.FAILED)}))
+}
+
 internal fun transferLabel(state:TaskState):String=when(state){
     TaskState.SYNCING_METADATA->"Finishing library sync"
-    TaskState.WAITING_FOR_WIFI->"Waiting for Wi-Fi"
+    TaskState.WAITING_FOR_WIFI->"Waiting for an unmetered network"
     TaskState.WAITING_FOR_CHARGING->"Waiting for charging"
     TaskState.WAITING_FOR_UNLOCK->"Waiting for vault unlock"
     TaskState.WAITING_FOR_NETWORK->"Waiting for connection"
