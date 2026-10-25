@@ -2,6 +2,8 @@
 
 package app.tgdrive.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
@@ -177,7 +179,8 @@ fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.
         finally{loading=false}
     }
     val thumb=bitmap
-    if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,if(square)modifier else modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
+    val reveal by androidx.compose.animation.core.animateFloatAsState(if(thumb!=null)1f else 0f,androidx.compose.animation.core.tween(180),label="thumbnail-reveal")
+    if(thumb!=null)androidx.compose.foundation.Image(thumb.asImageBitmap(),null,if(square)modifier.then(Modifier.graphicsLayer { alpha=reveal }) else modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
     else Box(modifier,contentAlignment=Alignment.Center) {
         when {
             loading->CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp)

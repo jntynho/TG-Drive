@@ -59,36 +59,54 @@ class TransferIntegrationTest {
         assertTrue(repo.db().preferences().chargingOnly)
         assertTrue(cacheFile.exists())
     }
-    @Test fun `batch uploads share one metadata send and preserve completion callbacks`()=runBlocking {
+    @Test fun `single document uploads embed metadata and preserve completion callbacks`()=runBlocking {
         open();var completed=0;engine.completed={completed++}
         engine.enqueueUpload((1..5).map{source("content-$it".toByteArray(),"file-$it.bin")});engine.drain(20_000)
         assertEquals(5,repo.state.value.tasks.count{it.state==TaskState.COMPLETED})
         assertEquals(5,completed)
         assertTrue(repo.state.value.tasks.drop(1).any{it.payload.model<UploadSpec>().preparedSource})
         val messages=wire.messages.values.mapNotNull{(it.content as? TdApi.MessageText)?.text?.text}
-        assertEquals(1,messages.count{it.startsWith(CloudCodec.BATCH)})
-        assertEquals(10,CloudCodec.decodeMany(messages.single{it.startsWith(CloudCodec.BATCH)}).size)
+        assertTrue(messages.isEmpty())
+        val documents=wire.messages.values.mapNotNull{it.content as? TdApi.MessageDocument}
+        assertEquals(5,documents.size)
+        assertTrue(documents.all{it.caption.text.startsWith(EmbeddedUpload.PREFIX)})
+        assertEquals(5,wire.sendCalls)
         engine.drain(20_000);assertEquals(5,completed)
     }
-    @Test fun `purging one file relocates siblings before deleting a shared metadata batch`()=runBlocking {
+    @Test fun `purging one embedded file retains sibling messages and deletion marker`()=runBlocking {
         open()
         engine.enqueueUpload(listOf(source("one".toByteArray(),"one.bin"),source("two".toByteArray(),"two.bin")));engine.drain(20_000)
         val first=repo.state.value.items.first()
         val survivor=repo.state.value.items.first{it.id!=first.id}
         val actions=LibraryActions(repo,engine);actions.trash(listOf(first.id));actions.purge(listOf(first.id))
-        val cloud=wire.messages.values.flatMap{m->val text=(m.content as? TdApi.MessageText)?.text?.text; if(text==null)emptyList()else CloudCodec.decodeMany(text)}
+        val cloud=wire.messages.values.flatMap{m->
+            val text=(m.content as? TdApi.MessageText)?.text?.text
+            val doc=m.content as? TdApi.MessageDocument
+            if(text!=null)CloudCodec.decodeMany(text)else if(doc?.caption?.text?.startsWith(EmbeddedUpload.PREFIX)==true)EmbeddedUpload.resolve(doc.caption.text,m.id,doc.document.document.size)else emptyList()
+        }
         assertTrue(cloud.any{it.entityId==survivor.id})
         assertTrue(cloud.filter{it.entityId==first.id}.all{it.tombstone})
     }
+    @Test fun `legacy multipart metadata batch relocates surviving sibling operations before purge`()=runBlocking {
+        open()
+        engine.enqueueUpload(listOf(source(ByteArray(1_100_000){1},"legacy-one.bin"),source(ByteArray(1_100_000){2},"legacy-two.bin")))
+        engine.drain(20_000)
+        val original=repo.state.value.items.first();val sibling=repo.state.value.items.first{it.id!=original.id}
+        assertEquals(1,wire.messages.values.count{(it.content as? TdApi.MessageText)?.text?.text?.startsWith(CloudCodec.BATCH)==true})
+        val actions=LibraryActions(repo,engine);actions.trash(listOf(original.id));actions.purge(listOf(original.id))
+        val ops=wire.messages.values.flatMap{(it.content as? TdApi.MessageText)?.text?.text?.let(CloudCodec::decodeMany)?:emptyList()}
+        assertTrue(ops.any{it.entityId==sibling.id});assertTrue(ops.filter{it.entityId==original.id}.all{it.tombstone})
+        assertArrayEquals(ByteArray(1_100_000){2},repo.cache!!.materialize(sibling,repo.version(sibling.versionId),"").readBytes())
+    }
     @Test fun `metadata failure retains content and retries without uploading it again`()=runBlocking {
         open();wire.failMetadata=true
-        engine.enqueueUpload(listOf(source("retained content".toByteArray())))
+        engine.enqueueUpload(listOf(source(ByteArray(1_100_000){42})))
         assertTrue(runCatching{engine.drain(20_000)}.isFailure)
         assertEquals(TaskState.SYNCING_METADATA,repo.state.value.tasks.single().state)
-        assertEquals(1,wire.uploadedIndices.size)
+        assertEquals(2,wire.uploadedIndices.size)
         wire.failMetadata=false;engine.drain(20_000)
         assertEquals(TaskState.COMPLETED,repo.state.value.tasks.single().state)
-        assertEquals(1,wire.uploadedIndices.size)
+        assertEquals(2,wire.uploadedIndices.size)
     }
     @Test fun `server flood wait applies to the account and manual retry cannot bypass it`()=runBlocking {
         open();wire.sendWait=160
@@ -214,8 +232,9 @@ class TransferIntegrationTest {
     @Test fun `priority starts the urgent queued file before ordinary queued files`()=runBlocking {
         open();engine.enqueueUpload(listOf(source("first".toByteArray(),"first.bin"),source("urgent".toByteArray(),"urgent.bin")))
         val urgent=repo.state.value.tasks.last();engine.prioritize(urgent.id);engine.drain(20_000)
-        val firstPart=wire.messages.values.first{(it.content as? TdApi.MessageDocument)?.caption?.text?.startsWith(CloudCodec.PART)==true}.content as TdApi.MessageDocument
-        assertEquals(urgent.itemId,firstPart.caption.text.removePrefix(CloudCodec.PART).model<PartCaption>().itemId)
+        val first=wire.messages.values.first{it.content is TdApi.MessageDocument}
+        val doc=first.content as TdApi.MessageDocument
+        assertEquals(urgent.itemId,EmbeddedUpload.resolve(doc.caption.text,first.id,doc.document.document.size).last().entityId)
     }
     @Test fun `average pacing checkpoints a wait without falsely completing and can be disabled`()=runBlocking {
         open();repo.updatePreferences{it.copy(uploadPaceKiB=1)}
@@ -303,6 +322,29 @@ class TransferIntegrationTest {
         assertEquals("first-account-password",repo.accountSecret("webdav-password"))
         assertEquals("first-account-owner-token",repo.accountSecret("sharing-token"))
     }
+    @Test fun `embedded message alone restores library and repeated scan is idempotent`()=runBlocking {
+        open();val bytes="self-contained original".toByteArray()
+        engine.enqueueUpload(listOf(source(bytes,"photo.jpg")));engine.drain(20_000)
+        val item=repo.state.value.items.single()
+        LibraryActions(repo,engine).rename(item.id,"Renamed.jpg");repo.flush()
+        val messages=wire.messages.values.sortedByDescending{it.id}
+        repo.mutate{db->db.entries("journal").forEach{db.remove("journal",it.first)};db.entries("entities").forEach{db.remove("entities",it.first)}}
+        assertTrue(repo.state.value.items.isEmpty())
+        wire.history=messages;repo.sync(full=true);repo.sync(full=true)
+        assertEquals(item.id,repo.state.value.items.single().id)
+        assertEquals("Renamed.jpg",repo.item(item.id).name)
+        assertTrue(repo.state.value.conflicts.isEmpty());assertTrue(repo.db().pending().isEmpty())
+        assertArrayEquals(bytes,repo.cache!!.materialize(repo.item(item.id),repo.version(item.versionId),"").readBytes())
+    }
+    @Test fun `embedded acknowledgement is recovered without another content send`()=runBlocking {
+        open();engine.enqueueUpload(listOf(source("recover me".toByteArray())));engine.drain(20_000)
+        val complete=repo.state.value.tasks.single();val caption=complete.payload.model<UploadSpec>().embeddedCaption
+        assertTrue(caption.isNotEmpty());val messageId=complete.parts.single().messageId
+        repo.setTask(complete.copy(state=TaskState.PAUSED,parts=emptyList(),pendingMessageId=messageId,done=0,completionNotified=false))
+        engine.retry(complete.id);engine.drain(20_000)
+        assertEquals(1,wire.uploadedIndices.size);assertEquals(messageId,repo.state.value.tasks.single().parts.single().messageId)
+        assertTrue(repo.state.value.conflicts.isEmpty())
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]
@@ -336,7 +378,7 @@ class TransferIntegrationTest {
                         is TdApi.InputMessageText->text(++next,content.text.text).also{messages[it.id]=it}
                         is TdApi.InputMessageDocument->{
                             val caption=content.caption.text
-                            val part=if(caption.startsWith(CloudCodec.PART))caption.removePrefix(CloudCodec.PART).model<PartCaption>().index else null
+                            val part=if(caption.startsWith(CloudCodec.PART))caption.removePrefix(CloudCodec.PART).model<PartCaption>().index else if(caption.startsWith(EmbeddedUpload.PREFIX))0 else null
                             if(part==failPart&&part!=null)TdApi.Error(500,"simulated temporary failure") else {
                                 if(part!=null)uploadedIndices.add(part)
                                 val id=++next;val source=File((content.document.document as TdApi.InputFileLocal).path);val target=File(directory,"$id.bin");source.copyTo(target,true)

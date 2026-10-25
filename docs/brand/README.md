@@ -1,5 +1,9 @@
-# TG Drive — Folded Cloud
+# Cloud Stack app icon
 
-Original TG Drive vector artwork, inspired by premium app-icon clarity without using Apple or Telegram marks. The generated raster concept informed a separately authored SVG; the deliverable contains real paths and gradients, no embedded bitmap or external resources. `tg-drive-icon.svg` is the 1024 px full icon; `tg-drive-mark.svg` is the transparent monochrome mark. Android adaptive launcher assets use the same paths with mask-safe margins. Notifications use the white monochrome silhouette.
+Original TG Drive artwork: a cloud with a negative-space upward arrow and two storage layers on a blue gradient. No Apple or Telegram trademark artwork is used. A generated raster concept was a reference; all deliverables are separately authored vector paths, with no embedded raster or external resource.
 
-The generated concept remains outside the repository in the workspace. App UI icons come from Lucide and have separate notices under `third_party/lucide/`.
+- `tg-drive-icon.svg`: 1024 px full icon, separately editable `background` and `logo` groups.
+- `tg-drive-mark.svg`: transparent white mark.
+- Android adaptive resources use the same geometry on independent background/foreground layers, with mask-safe margins. Android 13 monochrome has one uniform fill. The existing notification silhouette remains simple for small status icons.
+
+SVG scales without quality loss. Android's launcher supplies mask and motion; applications cannot force every launcher to animate or size icons identically. UI glyphs use licensed Lucide resources under `third_party/lucide`.

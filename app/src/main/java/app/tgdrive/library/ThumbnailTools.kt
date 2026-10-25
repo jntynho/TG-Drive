@@ -82,17 +82,20 @@ class ThumbnailTools(private val repository: LibraryRepository) {
         if(part == null) {
             // Imported/older documents may have Telegram's own small preview. Never fetch
             // the original photo or video just to populate a scrolling gallery.
-            if(!version.imported || version.parts.size != 1 || repository.itemVault(item.id).isNotEmpty()) return@withContext null
+            if(version.parts.size != 1 || repository.itemVault(item.id).isNotEmpty()) return@withContext null
             val document = repository.remote.document(version.parts.single().messageId).document
-            val mini = document.minithumbnail?.data
-            if(mini != null && mini.size <= 512*1024) return@withContext decodeBounded(mini)
-            val thumbnail = document.thumbnail?.file ?: return@withContext null
-            if(thumbnail.size !in 1..524_288) return@withContext null
-            val downloaded = repository.session.call(org.drinkless.tdlib.TdApi.DownloadFile(thumbnail.id, 1, 0, 0, true), 30_000) as org.drinkless.tdlib.TdApi.File
-            if(!downloaded.local.isDownloadingCompleted) return@withContext null
-            val file = java.io.File(downloaded.local.path)
-            if(file.length() !in 1..524_288) return@withContext null
-            return@withContext decodeBounded(file.readBytes())
+            val thumbnail = document.thumbnail?.file
+            if(thumbnail!=null&&maxOf(thumbnail.size,thumbnail.expectedSize) in 1..524_288) {
+                try {
+                    val downloaded=repository.session.call(org.drinkless.tdlib.TdApi.DownloadFile(thumbnail.id,1,0,0,true),30_000) as org.drinkless.tdlib.TdApi.File
+                    if(downloaded.local.isDownloadingCompleted) {
+                        val file=java.io.File(downloaded.local.path)
+                        if(file.length() in 1..524_288)decodeBounded(file.readBytes())?.let{return@withContext it}
+                    }
+                }catch(e:CancellationException){throw e}catch(_:Exception){/* Try the tiny embedded placeholder below. */}
+            }
+            document.minithumbnail?.data?.takeIf{it.size<=512*1024}?.let{return@withContext decodeBounded(it)}
+            return@withContext null
         }
         require(part.storedSize in 1..524_400)
         repository.cache!!.lease(version.id).use {

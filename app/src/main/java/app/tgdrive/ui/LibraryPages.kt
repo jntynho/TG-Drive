@@ -42,18 +42,21 @@ internal fun libraryCollection(state: LibraryState, kind: String = "all", query:
 }
 
 @Composable
-fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit,homeQuery:String="",filesQuery:String="",onFilters:((()->Unit)->Unit)={},recentView:Boolean=false,onRecent:()->Unit={},onAdd:()->Unit={},addRequested:Boolean=false,onAddConsumed:()->Unit={}) {
+fun HomePage(state: LibraryState, bundle: SessionBundle, system: SystemActions, onPreview: (String) -> Unit, page: String, onPage: (String) -> Unit, onFolderTitle: (String) -> Unit, onFolderBack: ((()->Unit)?)->Unit,homeQuery:String="",filesQuery:String="",onFilters:((()->Unit)->Unit)={},recentView:Boolean=false,onRecent:()->Unit={},onAdd:()->Unit={},addRequested:Boolean=false,onAddConsumed:()->Unit={},homeSearch:HeaderSearch?=null,filesSearch:HeaderSearch?=null) {
     var actionId by remember { mutableStateOf("") }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     BackHandler(page != "home") { onPage("home") }
     AnimatedContent(page, transitionSpec = { horizontalNavigation(targetState != "home") }, label = "home-detail") { route ->
         saved.SaveableStateProvider(route) {
             if (route == "home") {
+                Column(Modifier.fillMaxSize()){
+                homeSearch?.let{HeaderSearchField(it)}
                 HomeContent(state, bundle, onOpen = onPage, onPreview = onPreview, onMenu = { actionId = it },
                     onUpload = onAdd,query=homeQuery,onRecent=onRecent)
+                }
             } else Column(Modifier.fillMaxSize()) {
                 when(route) {
-                    "files" -> FilesPage(state, bundle, system, onPreview, onFolderTitle,onFolderBack,query=filesQuery,onFilters=onFilters,recentView=recentView,addRequested=addRequested,onAddConsumed=onAddConsumed)
+                    "files" -> Column(Modifier.fillMaxSize()){filesSearch?.let{HeaderSearchField(it)};FilesPage(state, bundle, system, onPreview, onFolderTitle,onFolderBack,query=filesQuery,onFilters=onFilters,recentView=recentView,addRequested=addRequested,onAddConsumed=onAddConsumed)}
                     "activity" -> TransfersPage(state, bundle, system)
                     "backups" -> BackupsPage(state, bundle, system)
                 }
@@ -99,23 +102,24 @@ internal fun HomeContent(state: LibraryState, bundle: SessionBundle? = null, onO
 }
 
 @Composable
-fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit,query:String="",selecting:Boolean=false,selected:Set<String> = emptySet(),onSelection:(Set<String>)->Unit={},onSelectMode:()->Unit={}) {
+fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions, gallery: Boolean, onPreview: (String) -> Unit,query:String="",selecting:Boolean=false,selected:Set<String> = emptySet(),onSelection:(Set<String>)->Unit={},onSelectMode:()->Unit={},search:HeaderSearch?=null,sort:MediaSort=MediaSort.NEWEST) {
     var actionId by remember { mutableStateOf("") }
     var kind by rememberSaveable{mutableStateOf("All")}
     var move by remember{mutableStateOf(false)}
     var trash by remember{mutableStateOf(false)}
-    val media by produceState(emptyList<Item>(), state.items, state.versions, state.itemVaults, state.unlockedVaultIds, gallery, query) {
-        value = withContext(Dispatchers.Default) { libraryCollection(state, if(gallery) "gallery" else "audio", query) }
+    val media by produceState(emptyList<Item>(), state.items, state.versions, state.itemVaults, state.unlockedVaultIds, gallery, query, sort) {
+        value = withContext(Dispatchers.Default) { sortMedia(libraryCollection(state, if(gallery) "gallery" else "audio", query),sort,state.versions) }
     }
     val visibleIds = state.items.filter { it.deletedAt==0L && (state.itemVaults[it.id].orEmpty().isEmpty() || state.itemVaults[it.id] in state.unlockedVaultIds) }.map{it.id}.toSet()
     val shown=media.filter{it.id in visibleIds&&(!gallery||kind=="All"||kind=="Photos"&&it.mime.startsWith("image/")||kind=="Videos"&&it.mime.startsWith("video/"))}
     Column(Modifier.fillMaxSize()) {
+        search?.let{HeaderSearchField(it)}
         if(gallery&&!selecting)Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             listOf("All","Photos","Videos").forEach{label->DriveFilterChip(kind==label,{kind=label},label={Text(label)})}
         }
-        Text(if(gallery&&selecting)"${selected.size} selected"else"${shown.size} ${if(gallery)"photos and videos"else"audio files"}",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        if(!gallery||selecting)Text(if(selecting)"${selected.size} selected"else"${shown.size} audio files",Modifier.padding(horizontal=16.dp,vertical=8.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
         LaunchedEffect(visibleIds){onSelection(selected.intersect(visibleIds))}
-        Box(Modifier.weight(1f)) {MediaContent(shown,gallery,bundle,{id->if(selecting)onSelection(if(id in selected)selected-id else selected+id)else onPreview(id)},{actionId=it},state=state,selected=selected,selecting=selecting,onLongSelect={id->onSelectMode();onSelection(selected+id)})}
+        Box(Modifier.weight(1f)) {MediaContent(shown,gallery,bundle,{id->if(selecting)onSelection(if(id in selected)selected-id else selected+id)else onPreview(id)},{actionId=it},state=state,selected=selected,selecting=selecting,onLongSelect={id->onSelectMode();onSelection(selected+id)},groupDates=sort==MediaSort.NEWEST||sort==MediaSort.OLDEST)}
         if(gallery&&selecting) {
             androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 TextButton({onSelection(shown.map{it.id}.toSet())}){Text("Select all")}
@@ -134,14 +138,14 @@ fun MediaPage(state: LibraryState, bundle: SessionBundle, system: SystemActions,
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit,state:LibraryState=LibraryState(),selected:Set<String> = emptySet(),selecting:Boolean=false,onLongSelect:(String)->Unit={}) {
+internal fun MediaContent(items: List<Item>, gallery: Boolean, bundle: SessionBundle? = null, onPreview: (String) -> Unit, onMenu: (String) -> Unit,state:LibraryState=LibraryState(),selected:Set<String> = emptySet(),selecting:Boolean=false,onLongSelect:(String)->Unit={},groupDates:Boolean=true) {
     if(items.isEmpty()) Box(Modifier.fillMaxSize().padding(24.dp),contentAlignment=Alignment.Center) {
         InfoCard(if(gallery) "No photos or videos" else "No audio files", if(gallery)"Add photos and videos from Home to see them here."else"Add audio from Home, or try another search.", if(gallery) DriveIcons.PhotoLibrary else DriveIcons.AudioFile)
     } else if(gallery) LazyVerticalGrid(GridCells.Adaptive(100.dp),Modifier.fillMaxSize(),contentPadding=PaddingValues(bottom=24.dp),
         horizontalArrangement=Arrangement.spacedBy(2.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
         val dates=state.versions.associate{it.id to it.createdAt}
-        items.groupBy{DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(dates[it.versionId]?:it.createdAt))}.forEach{(date,group)->
-        item(span={GridItemSpan(maxLineSpan)}){Text("Uploaded $date",Modifier.padding(horizontal=16.dp,vertical=10.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        (if(groupDates)items.groupBy{DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(dates[it.versionId]?:it.createdAt))}else linkedMapOf("" to items)).forEach{(date,group)->
+        if(date.isNotEmpty())item(span={GridItemSpan(maxLineSpan)}){Text("Uploaded $date",Modifier.padding(horizontal=16.dp,vertical=10.dp),style=MaterialTheme.typography.labelMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         items(group,key={it.id}) { item ->
             androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().aspectRatio(4f/5f).background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .combinedClickable(role=androidx.compose.ui.semantics.Role.Button,onClickLabel=if(selecting)"Select ${item.name}"else"Open ${item.name}",onClick={onPreview(item.id)},onLongClick={onLongSelect(item.id)},onLongClickLabel="Select file")

@@ -177,6 +177,32 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
             if (origin.isNotEmpty()) db().putLocal(db().local(item.id).copy(sourceUri = origin, sourceHash = item.sha256))
         }; changed?.invoke()
     }
+    /** Capture stable operation IDs before sending; the task persists the resulting caption first. */
+    suspend fun prepareEmbeddedUpload(task:TransferTask,spec:UploadSpec):String = withContext(Dispatchers.IO) {
+        writes.withLock {
+            checkAccount(task.accountId)
+            val previous=state.value.items.firstOrNull{it.id==task.itemId}
+            val item=(previous?:Item(id=task.itemId,name=task.title,folderId=task.folderId,mime=spec.mime)).copy(
+                versionId=task.versionId,size=task.total,sha256=task.sourceSha256,modifiedAt=now(),deletedAt=0)
+            val version=Version(task.versionId,item.id,task.total,task.sourceSha256,listOf(Part(0,0,task.total,task.total,task.sourceSha256)))
+            val caption=EmbeddedUpload.encode(listOf(envelope(EntityKind.VERSION,version.id,version.json()),envelope(EntityKind.ITEM,item.id,item.json())))?:""
+            if(caption.isNotEmpty())EmbeddedUpload.resolve(caption,1,task.total)
+            caption
+        }
+    }
+    suspend fun saveEmbeddedUpload(caption:String,part:Part,origin:String,accountId:Long) {
+        val operations=EmbeddedUpload.resolve(caption,part.messageId,part.storedSize)
+        mutate { database->
+            checkAccount(accountId)
+            database.transaction {
+                operations.forEach{database.apply(JournalEntry(it,part.messageId))}
+                if(origin.isNotEmpty()) {
+                    val item=operations.last().body.model<Item>()
+                    database.putLocal(database.local(item.id).copy(sourceUri=origin,sourceHash=item.sha256))
+                }
+            }
+        };changed?.invoke()
+    }
     suspend fun setTask(task: TransferTask) = withContext(Dispatchers.IO) {
         writes.withLock {
             checkAccount(task.accountId); db().putTask(task.copy(updatedAt = now()))
@@ -235,6 +261,12 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
                             doc?.caption?.text?.startsWith(CloudCodec.DOCUMENT) == true -> {
                                 require(doc.document.document.size <= 1_500_000) { "Metadata document is too large." }
                                 CloudCodec.decodeMany(remote.readAll(m.id).readText()).forEach { received.add(m.id to it) }
+                            }
+                            doc?.caption?.text?.startsWith(EmbeddedUpload.PREFIX) == true -> {
+                                val ops=EmbeddedUpload.resolve(doc.caption.text,m.id,doc.document.document.size)
+                                ops.forEach{received.add(m.id to it)}
+                                val version=ops.first().body.model<Version>()
+                                partReceipts.add("cloud-part:${version.id}:0" to version.parts.single())
                             }
                             doc?.caption?.text?.startsWith(CloudCodec.BACKUP) == true -> backups.add(m.id)
                             doc?.caption?.text?.startsWith(CloudCodec.THUMB) == true -> {

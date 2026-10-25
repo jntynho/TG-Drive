@@ -51,7 +51,7 @@ fun now() = System.currentTimeMillis()
     val ruleId: String = "", val allowDuplicate: Boolean = false,
     val speedBytesPerSecond: Long = 0, val priority: Int = 0, val completionNotified:Boolean=false,
 )
-@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0, val preparedSource:Boolean=false, val preparedHash:String="", val preparedSize:Long=0)
+@Serializable data class UploadSpec(val mime: String = "application/octet-stream", val chunkBytes: Long = 0, val currentPlainSize: Long = 0, val currentStoredHash: String = "", val thumbnail: Part? = null, val thumbnailAttempted: Boolean = false, val paceUntil: Long = 0, val embeddedCaption:String="", val preparedSource:Boolean=false, val preparedHash:String="", val preparedSize:Long=0)
 @Serializable data class SourceReceipt(val uri: String, val size: Long, val modifiedAt: Long, val hash: String, val itemId: String, val uploadedAt: Long = now())
 @Serializable data class BackupRule(
     val id: String = newId(), val name: String, val treeUri: String, val folderId: String = "", val vaultId: String = "",

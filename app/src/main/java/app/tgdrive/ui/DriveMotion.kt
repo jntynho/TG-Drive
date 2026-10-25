@@ -9,5 +9,5 @@ fun <T> AnimatedContentTransitionScope<T>.horizontalNavigation(forward: Boolean)
     val direction = if (forward) AnimatedContentTransitionScope.SlideDirection.Left else AnimatedContentTransitionScope.SlideDirection.Right
     return (slideIntoContainer(direction, tween(280, easing = FastOutSlowInEasing)) togetherWith
         slideOutOfContainer(direction, tween(280, easing = FastOutSlowInEasing)))
-        .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(280) }))
+        .using(null)
 }

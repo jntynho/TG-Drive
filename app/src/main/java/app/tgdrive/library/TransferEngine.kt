@@ -292,6 +292,10 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         }
         val count = if (current.total == 0L) 0 else ((current.total + chunk - 1) / chunk).toInt()
         val directory = File(context.filesDir, "transfer-staging/${current.profileId}/${current.id}").apply { mkdirs() }
+        if(count==1&&current.vaultId.isEmpty()&&current.parts.isEmpty()&&spec.embeddedCaption.isEmpty()&&current.pendingMessageId==0L) {
+            spec=spec.copy(embeddedCaption=repository.prepareEmbeddedUpload(current,spec))
+            current=current.copy(payload=spec.json());repository.setTask(current)
+        }
         while (current.parts.size < count) {
             ensureActive(); repository.checkAccount(current.accountId)
             val waitUntil=current.payload.model<UploadSpec>().paceUntil
@@ -299,7 +303,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
             val sendStarted=now()
             val index = current.parts.size
             val bytes = minOf(chunk, current.total - index * chunk)
-            val sourceFile = File(directory, "part-$index.bin")
+            val sourceFile = File(if(spec.embeddedCaption.isNotEmpty())File(directory,"original").apply{mkdirs()}else directory, if(spec.embeddedCaption.isNotEmpty())current.title.replace(Regex("[\\\\/:]"),"_").take(180)else "part-$index.bin")
             var recovered = if (current.pendingMessageId != 0L) repository.remote.recoverPending(current.pendingMessageId) else null
             if (recovered == null) {
                 val receipt = repository.db().get("sources", "cloud-part:${current.versionId}:$index")?.model<Part>()
@@ -322,18 +326,29 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
                     } finally { temp.delete() }
                 }
                 val hash = sourceFile.sha256()
+                require(current.vaultId.isNotEmpty()||count!=1||hash==current.sourceSha256){"Source content changed while preparing the upload. Start a new upload."}
                 spec = spec.copy(currentPlainSize = bytes, currentStoredHash = hash)
                 current = current.copy(state = TaskState.TRANSFERRING, pendingPartPath = sourceFile.absolutePath, payload = spec.json(), error = "")
                 repository.setTask(current)
-                val caption = CloudCodec.PART + PartCaption(current.itemId, current.versionId, index, count, bytes, hash, current.vaultId.isNotEmpty()).json()
-                recovered = repository.remote.sendDocument(sourceFile, caption) { pending ->
+                val caption = spec.embeddedCaption.ifEmpty{CloudCodec.PART + PartCaption(current.itemId, current.versionId, index, count, bytes, hash, current.vaultId.isNotEmpty()).json()}
+                val attached=if(spec.embeddedCaption.isNotEmpty()) {
+                    val preview=try{ThumbnailTools(repository).create(sourceUri,spec.mime)}catch(e:CancellationException){throw e}catch(_:Exception){null}
+                    preview?.takeIf{it.size<=204_800}?.let{data->File(directory,"attached-preview.jpg").apply{writeBytes(data)}}
+                }else null
+                recovered = repository.remote.sendDocument(sourceFile, caption, pending = { pending ->
                     current = task(initial.id).copy(pendingMessageId = pending.id)
                     repository.setTask(current)
                     activeFileId = (pending.content as? TdApi.MessageDocument)?.document?.document?.id ?: 0
-                }
+                },thumbnail=attached)
+                attached?.delete()
             }
             val content = recovered.content as? TdApi.MessageDocument ?: error("Telegram returned no uploaded document.")
-            val caption = content.caption.text.removePrefix(CloudCodec.PART).model<PartCaption>()
+            val caption = if(spec.embeddedCaption.isNotEmpty()) {
+                val ops=EmbeddedUpload.resolve(content.caption.text,recovered.id,content.document.document.size)
+                val version=ops.first().body.model<Version>()
+                require(content.caption.text==spec.embeddedCaption&&version.sha256==current.sourceSha256)
+                PartCaption(current.itemId,version.id,0,1,version.size,version.sha256,false)
+            }else content.caption.text.removePrefix(CloudCodec.PART).model<PartCaption>()
             require(caption.versionId == current.versionId && caption.index == index && caption.itemId == current.itemId) { "Pending message does not match this upload." }
             val part = Part(recovered.id, index, bytes, content.document.document.size, caption.storedSha256, current.vaultId.isNotEmpty())
             val pace=repository.state.value.preferences.uploadPaceKiB
@@ -343,7 +358,7 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         }
         spec = current.payload.model<UploadSpec>()
         if(repository.state.value.preferences.uploadPaceKiB>0&&spec.paceUntil>now()){repository.setTask(current.copy(state=TaskState.RETRY_WAIT,nextAttemptAt=spec.paceUntil,error="Waiting for the configured average upload pace."));return@withContext}
-        if(!spec.thumbnailAttempted) {
+        if(!spec.thumbnailAttempted&&spec.embeddedCaption.isEmpty()) {
             val thumbFile=File(directory,"thumbnail.bin")
             var thumb = if(current.pendingMessageId!=0L) repository.remote.recoverPending(current.pendingMessageId) else null
             if(thumb==null) {
@@ -370,7 +385,8 @@ class TransferEngine(val repository: LibraryRepository, val scope: CoroutineScop
         val item = (previous ?: Item(id = current.itemId, name = current.title, folderId = current.folderId, mime = spec.mime)).copy(
             versionId = current.versionId, size = current.total, sha256 = current.sourceSha256, modifiedAt = now(), deletedAt = 0)
         val version = Version(current.versionId, item.id, current.total, current.sourceSha256, current.parts, thumbnail=spec.thumbnail)
-        if (previous?.versionId != version.id) repository.saveUploaded(item, version, current.vaultId, current.source, current.accountId)
+        if(spec.embeddedCaption.isNotEmpty())repository.saveEmbeddedUpload(spec.embeddedCaption,current.parts.single(),current.source,current.accountId)
+        else if (previous?.versionId != version.id) repository.saveUploaded(item, version, current.vaultId, current.source, current.accountId)
         repository.setTask(task(initial.id).copy(state=TaskState.SYNCING_METADATA,done=current.total,error="Content uploaded. Saving library information…",speedBytesPerSecond=0))
         if(repository.db().pending().size>=24)repository.flush()
         directory.deleteRecursively()

@@ -56,6 +56,9 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     var folderTitle by remember { mutableStateOf("All files") }
     var homeQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
     var filesQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
+    var galleryQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
+    var gallerySort by rememberSaveable(bundle.profile.id){mutableStateOf(MediaSort.NEWEST)}
+    var audioSort by rememberSaveable(bundle.profile.id){mutableStateOf(MediaSort.NEWEST)}
     var audioQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
     var settingsQuery by rememberSaveable(bundle.profile.id){mutableStateOf("")}
     var gallerySelecting by rememberSaveable(bundle.profile.id){mutableStateOf(false)}
@@ -75,7 +78,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
     val preview = remember(state.items,previewId){state.items.firstOrNull { it.id == previewId&&it.deletedAt==0L }}
     var lastPreview by remember{mutableStateOf<Item?>(null)}
     SideEffect{if(preview!=null)lastPreview=preview}
-    val galleryPages=remember(state.items,state.versions,state.unlockedVaultIds,state.itemVaults){libraryCollection(state,"gallery")}
+    val galleryPages=remember(state.items,state.versions,state.unlockedVaultIds,state.itemVaults,galleryQuery,gallerySort){sortMedia(libraryCollection(state,"gallery",galleryQuery),gallerySort,state.versions)}
     BackHandler(enabled=tab!=NativeTab.HOME && preview==null){tab=NativeTab.HOME}
     BackHandler(enabled=preview!=null){previewId=""}
     LaunchedEffect(state.items,previewId) { if(previewId.isNotEmpty()&&preview==null)previewId="" }
@@ -99,13 +102,12 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
             }
             Scaffold(containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
                 snackbarHost={SnackbarHost(snackbar)}, topBar={
-                    DriveAppHeader(headerTitle,back,if(signingIn||!state.loaded)null else when {
-                        tab==NativeTab.HOME&&homeRoute=="home"->HeaderSearch(homeQuery,{homeQuery=it},"Search your library")
-                        tab==NativeTab.HOME&&homeRoute=="files"->HeaderSearch(filesQuery,{filesQuery=it},"Search files, tags and text",filesFilters)
-                        tab==NativeTab.AUDIO->HeaderSearch(audioQuery,{audioQuery=it},"Search audio")
-                        tab==NativeTab.SETTINGS&&settingsRoute=="home"->HeaderSearch(settingsQuery,{settingsQuery=it},"Search settings")
-                        else->null
-                    },actions={if(!signingIn&&state.loaded&&tab==NativeTab.GALLERY)TextButton({gallerySelecting=!gallerySelecting;gallerySelected=emptyList()}){Text(if(gallerySelecting)"Done"else"Select")}})
+                    DriveAppHeader(headerTitle,back,actions={
+                        if(!signingIn&&state.loaded&&(tab==NativeTab.GALLERY||tab==NativeTab.AUDIO)) {
+                            MediaSortMenu(tab==NativeTab.GALLERY,if(tab==NativeTab.GALLERY)gallerySort else audioSort){if(tab==NativeTab.GALLERY)gallerySort=it else audioSort=it}
+                            if(tab==NativeTab.GALLERY)TextButton({gallerySelecting=!gallerySelecting;gallerySelected=emptyList()}){Text(if(gallerySelecting)"Done"else"Select")}
+                        }
+                    })
             },bottomBar={if(auth.login==LoginStep.READY&&state.loaded)Column{AudioMiniPlayer(bundle){previewId=it};DriveNavigationBar(tab,{selected->if(selected==tab){if(selected==NativeTab.HOME){homeRoute="home";homeQuery=""}else if(selected==NativeTab.SETTINGS){settingsRoute="home";settingsQuery=""}};tab=selected},state.tasks.any{it.state==TaskState.FAILED})}}){padding->
                 when {
                     auth.login!=LoginStep.READY->Column(Modifier.fillMaxSize().padding(padding)){
@@ -118,10 +120,10 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions) {
                     }
                     else->AnimatedContent(tab,Modifier.padding(padding),transitionSpec={horizontalNavigation(targetState.ordinal > initialState.ordinal)},label="navigation") { page ->
                         pageState.SaveableStateProvider(page){when(page){
-                            NativeTab.HOME,NativeTab.FILES,NativeTab.TRANSFERS,NativeTab.BACKUPS->HomePage(state,bundle,system,onPreview={previewId=it},page=homeRoute,onPage={homeRoute=it;if(it=="files")recentView=false},onFolderTitle={folderTitle=it},onFolderBack={fileBack=it},homeQuery=homeQuery,filesQuery=filesQuery,onFilters={filesFilters=it},recentView=recentView,onRecent={recentView=true;filesQuery="";homeRoute="files"},onAdd={recentView=false;addRequested=true;homeRoute="files"},addRequested=addRequested,onAddConsumed={addRequested=false})
-                            NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previewId=it},selecting=gallerySelecting,selected=gallerySelected.toSet(),onSelection={gallerySelected=it.toList()},onSelectMode={gallerySelecting=true})
-                            NativeTab.AUDIO->MediaPage(state,bundle,system,gallery=false,onPreview={previewId=it},query=audioQuery)
-                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME},page=settingsRoute,onPage={settingsRoute=it},onAccounts={accountSheet=true},query=settingsQuery)
+                            NativeTab.HOME,NativeTab.FILES,NativeTab.TRANSFERS,NativeTab.BACKUPS->HomePage(state,bundle,system,onPreview={previewId=it},page=homeRoute,onPage={homeRoute=it;if(it=="files")recentView=false},onFolderTitle={folderTitle=it},onFolderBack={fileBack=it},homeQuery=homeQuery,filesQuery=filesQuery,onFilters={filesFilters=it},recentView=recentView,onRecent={recentView=true;filesQuery="";homeRoute="files"},onAdd={recentView=false;addRequested=true;homeRoute="files"},addRequested=addRequested,onAddConsumed={addRequested=false},homeSearch=HeaderSearch(homeQuery,{homeQuery=it},"Search your library"),filesSearch=HeaderSearch(filesQuery,{filesQuery=it},"Search files, tags and text",filesFilters))
+                            NativeTab.GALLERY->MediaPage(state,bundle,system,gallery=true,onPreview={previewId=it},query=galleryQuery,search=HeaderSearch(galleryQuery,{galleryQuery=it},"Search photos and videos"),sort=gallerySort,selecting=gallerySelecting,selected=gallerySelected.toSet(),onSelection={gallerySelected=it.toList()},onSelectMode={gallerySelecting=true})
+                            NativeTab.AUDIO->MediaPage(state,bundle,system,gallery=false,onPreview={previewId=it},query=audioQuery,search=HeaderSearch(audioQuery,{audioQuery=it},"Search audio"),sort=audioSort)
+                            NativeTab.SETTINGS->SettingsPage(state,bundle,pool,system,onClose={tab=NativeTab.HOME},page=settingsRoute,onPage={settingsRoute=it},onAccounts={accountSheet=true},query=settingsQuery,search=HeaderSearch(settingsQuery,{settingsQuery=it},"Search settings"))
                         }}
                     }
                 }

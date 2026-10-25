@@ -16,10 +16,15 @@ class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSend
         val message = session.call(TdApi.GetMessage(session.savedMessagesId, messageId)) as TdApi.Message
         return message.content as? TdApi.MessageDocument ?: error("The original document is no longer available.")
     }
-    suspend fun sendDocument(source: File, caption: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
+    suspend fun sendDocument(source: File, caption: String, thumbnail:File?=null, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
+        val preview=thumbnail?.takeIf{it.exists()&&it.length() in 1..204_800}?.let {
+            val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
+            android.graphics.BitmapFactory.decodeFile(it.absolutePath,bounds)
+            if(bounds.outWidth in 1..320&&bounds.outHeight in 1..320)TdApi.InputThumbnail(TdApi.InputFileLocal(it.absolutePath),bounds.outWidth,bounds.outHeight)else null
+        }
         val first = session.call(TdApi.SendMessage().apply {
             chatId = session.savedMessagesId
-            inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileLocal(source.absolutePath), null, true), TdApi.FormattedText(caption, emptyArray()))
+            inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileLocal(source.absolutePath), preview, true), TdApi.FormattedText(caption, emptyArray()))
         }) as TdApi.Message
         pending(first)
         session.awaitSent(first)

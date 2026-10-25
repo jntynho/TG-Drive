@@ -124,9 +124,9 @@ class DriveDesignTest {
         assertEquals("",value)
         compose.onNodeWithContentDescription("Manage accounts").assertDoesNotExist()
     }
-    @Test fun galleryHeaderHasNoSearchInputAndRemovedSettingsAreNotListed() {
-        render{Column{DriveAppHeader("Gallery",null);SettingsHome(LibraryState()) {}}}
-        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+    @Test fun galleryHeaderSearchIsAvailableAndRemovedSettingsAreNotListed() {
+        render{Column{DriveAppHeader("Gallery",null,HeaderSearch("",{},"Search photos and videos"));SettingsHome(LibraryState()) {}}}
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(1)
         listOf("Organize by rules","Resolve conflicts","Optional connections").forEach{compose.onNodeWithText(it).assertDoesNotExist()}
         compose.onNodeWithText("Telegram accounts").assertIsDisplayed()
     }

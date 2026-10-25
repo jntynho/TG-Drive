@@ -116,8 +116,9 @@ fun DriveCircleButton(icon: ImageVector, description: String, onClick: () -> Uni
 @Composable
 fun DrivePageHeader(title: String, onBack: () -> Unit, close: Boolean = false, backDescription: String = "Back to settings") {
     Box(Modifier.fillMaxWidth().heightIn(min = 80.dp).padding(horizontal = DriveStyle.PageInset, vertical = 12.dp)) {
-        DriveCircleButton(if (close) DriveIcons.Close else DriveIcons.ArrowBack,
-            if (close) "Close settings" else backDescription, onBack, Modifier.align(Alignment.CenterStart))
+        IconButton(onBack,Modifier.align(Alignment.CenterStart)) {
+            Icon(if(close)DriveIcons.Close else DriveIcons.ArrowBack,if(close)"Close settings"else backDescription)
+        }
         Text(title, Modifier.align(Alignment.Center).padding(horizontal = 60.dp),
             style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }

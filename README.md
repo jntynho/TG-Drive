@@ -1,6 +1,6 @@
 # TG Drive
 
-Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.6.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
+Android file manager for documents stored in **your own Telegram Saved Messages**. Kotlin, native Jetpack Compose/Material 3, English UI, dark mode and short navigation transitions. Version **0.7.0 is experimental**; Arabic UI and desktop/web clients are outside this implementation.
 
 - Multiple uploads, persistent queue, priority, per-file retry/pause, unmetered/charging rules and approximate upload pacing.
 - Nested folders, rename/move, tags, favorites, search/filter, grid/list, trash, content versions and reversible organization rules.
@@ -13,7 +13,7 @@ Android file manager for documents stored in **your own Telegram Saved Messages*
 
 See [the feature-by-feature implementation and limits](docs/IMPLEMENTATION_STATUS.md), [security boundaries](docs/SECURITY.md), [validation](docs/TESTING.md), and [release instructions](docs/RELEASING.md).
 
-The [0.6.0 visual refresh](docs/DESIGN.md) applies the supplied Muse Android reference to the native UI: charcoal surfaces, grouped rounded settings, blue pill buttons, filled fields and quiet transitions. It uses the system font and adds no runtime libraries or image assets.
+The [native visual design](docs/DESIGN.md) applies the supplied Muse Android reference to the native UI: charcoal surfaces, grouped rounded settings, blue pill buttons, filled fields and quiet transitions. It uses the system font and adds no runtime libraries or image assets.
 
 ## Build
 
@@ -54,3 +54,5 @@ The bottom navigation is Home / Gallery / Audio / Settings. Home includes recent
 The 0.5 update adds adaptive page titles and Telegram account avatars, a square-corner 4:5 gallery, immersive image zoom, a dedicated gallery video player, Lucide interface icons, and an original [SVG app icon](docs/brand/tg-drive-icon.svg). The [UI review in Arabic](docs/UI-REVIEW.ar.md) records the source audit and the [upload pipeline](docs/TRANSFER-PIPELINE.md) explains batching, cooldowns and recovery. Update all TG Drive devices to 0.5+ to read newly batched cloud metadata.
 
 The 0.6 interface places account management in Settings and search in route headers (Home, all files, Audio and Settings). Gallery has no search field. Home displays active indexed bytes, file count, type distribution and offline-copy size without inventing a Telegram quota. Audio reads embedded cover art when available. Gallery supports type/date groups, selection and in-viewer paging; the audio mini-player remains available while browsing. The removed Organize, Conflict and Optional connection settings do not delete existing library records or credentials. See [the 0.6 implementation notes](docs/UI-0.6.md).
+
+The [0.7 update](docs/UI-0.7.md) restores Gallery header search, adds Gallery/Audio sort, fades thumbnails, stabilizes page geometry and adds a transparent media overlay, animated focal-point photo zoom and Compose video controls. Eligible unencrypted single-part files embed creation metadata in their own Telegram message and attach a thumbnail in the same request when supported. **Update all devices to 0.7+ to read these new creation captions.** Earlier files, encrypted vaults and multipart uploads remain readable; Telegram rate limits still apply.

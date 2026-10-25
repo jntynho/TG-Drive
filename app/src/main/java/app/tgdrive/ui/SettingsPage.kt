@@ -21,7 +21,7 @@ import app.tgdrive.*
 import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 
-@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit,onAccounts:()->Unit={},query:String=""){
+@Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit,onAccounts:()->Unit={},query:String="",search:HeaderSearch?=null){
     var confirmCache by remember{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
     BackHandler { if(page!="home")onPage(settingsParent(page)) else onClose() }
@@ -39,7 +39,7 @@ import app.tgdrive.library.*
         Column(Modifier.fillMaxSize()){
 
             when(current){
-                "home"->SettingsHome(state,query){destination->if(destination=="accounts")onAccounts()else onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}
+                "home"->{search?.let{HeaderSearchField(it)};SettingsHome(state,query){destination->if(destination=="accounts")onAccounts()else onPage(destination);if(destination=="storage")bundle.actions.run{bundle.library.updateStorage()}}}
                 "vaults"->VaultsPage(state,bundle)
                 else->LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,top=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
                     when(current){
