@@ -91,7 +91,7 @@ class TransferIntegrationTest {
         open()
         engine.enqueueUpload(listOf(source(ByteArray(1_100_000){1},"legacy-one.bin"),source(ByteArray(1_100_000){2},"legacy-two.bin")))
         engine.drain(20_000)
-        val original=repo.state.value.items.first();val sibling=repo.state.value.items.first{it.id!=original.id}
+        val original=repo.item(repo.state.value.tasks.single{it.source.endsWith("/legacy-one.bin")}.itemId);val sibling=repo.state.value.items.first{it.id!=original.id}
         assertEquals(1,wire.messages.values.count{(it.content as? TdApi.MessageText)?.text?.text?.startsWith(CloudCodec.BATCH)==true})
         val actions=LibraryActions(repo,engine);actions.trash(listOf(original.id));actions.purge(listOf(original.id))
         val ops=wire.messages.values.flatMap{(it.content as? TdApi.MessageText)?.text?.text?.let(CloudCodec::decodeMany)?:emptyList()}
@@ -152,6 +152,8 @@ class TransferIntegrationTest {
     @Test fun `source mutation after interruption fails without publishing a corrupt item`()=runBlocking {
         open();wire.failPart=1;val uri=source(ByteArray(1_100_000){1})
         engine.enqueueUpload(listOf(uri));engine.drain(20_000)
+        val task=repo.state.value.tasks.single()
+        File(context.filesDir,"transfer-staging/${task.profileId}/${task.id}/source").deleteRecursively()
         File(uri.path!!).writeBytes(ByteArray(1_100_000){2})
         wire.failPart=null;engine.retry(repo.state.value.tasks.single().id);engine.drain(20_000)
         assertEquals(TaskState.FAILED,repo.state.value.tasks.single().state)
@@ -230,7 +232,8 @@ class TransferIntegrationTest {
         assertTrue(runCatching{repo.cache!!.materialize(item,version,vault)}.isFailure)
     }
     @Test fun `priority starts the urgent queued file before ordinary queued files`()=runBlocking {
-        open();engine.enqueueUpload(listOf(source("first".toByteArray(),"first.bin"),source("urgent".toByteArray(),"urgent.bin")))
+        open();repo.updatePreferences{it.copy(uploadPaceKiB=1024)}
+        engine.enqueueUpload(listOf(source("first".toByteArray(),"first.bin"),source("urgent".toByteArray(),"urgent.bin")))
         val urgent=repo.state.value.tasks.last();engine.prioritize(urgent.id);engine.drain(20_000)
         val first=wire.messages.values.first{it.content is TdApi.MessageDocument}
         val doc=first.content as TdApi.MessageDocument
@@ -345,6 +348,76 @@ class TransferIntegrationTest {
         assertEquals(1,wire.uploadedIndices.size);assertEquals(messageId,repo.state.value.tasks.single().parts.single().messageId)
         assertTrue(repo.state.value.conflicts.isEmpty())
     }
+    @Test fun `two contents overlap and a paused upload does not cancel its sibling`()=runBlocking {
+        open();wire.holdUploads=true
+        engine.enqueueUpload(listOf(source("first native upload".toByteArray(),"a.jpg"),source("second native upload".toByteArray(),"b.jpg"),source("third native upload".toByteArray(),"c.jpg")))
+        val running=launch{engine.drain(20_000)}
+        withTimeout(5_000){while(wire.inFlightUploads.size<2)delay(10)}
+        assertEquals(2,wire.maxConcurrentUploads);assertEquals(0,wire.sendCalls)
+        val first=repo.state.value.tasks.first{it.state==TaskState.TRANSFERRING}
+        val originalText=File(Uri.parse(first.source).path!!).readText()
+        val firstNative=wire.files.values.first{File(it.local.path).readText()==originalText}.id
+        engine.pause(first.id)
+        assertTrue(firstNative in wire.cancelledUploads)
+        assertEquals(TaskState.PAUSED,engine.task(first.id).state)
+        wire.holdUploads=false;wire.readyUploads.addAll(wire.inFlightUploads)
+        running.join()
+        assertEquals(2,repo.state.value.tasks.count{it.state==TaskState.COMPLETED})
+        assertEquals(TaskState.PAUSED,engine.task(first.id).state)
+        assertTrue(wire.maxConcurrentUploads<=2)
+        engine.retry(first.id);engine.drain(20_000)
+        assertEquals(3,repo.state.value.tasks.count{it.state==TaskState.COMPLETED})
+        assertEquals(3,wire.uploadedIndices.size)
+        repo.state.value.items.forEach{item->assertEquals(item.sha256,repo.cache!!.materialize(item,repo.version(item.versionId),"").sha256())}
+    }
+    @Test fun `simultaneous identical sources publish only one content message`()=runBlocking {
+        open();engine.enqueueUpload(listOf(source("same simultaneous bytes".toByteArray(),"one.dat"),source("same simultaneous bytes".toByteArray(),"two.dat")))
+        engine.drain(20_000)
+        assertEquals(1,wire.uploadedIndices.size);assertEquals(1,repo.state.value.items.size)
+        assertEquals(2,repo.state.value.tasks.count{it.state==TaskState.COMPLETED})
+    }
+    @Test fun `a content stage flood wait freezes publishing and survives retry`()=runBlocking {
+        open();wire.preliminaryWait=160
+        engine.enqueueUpload(listOf(source("one".toByteArray(),"one.dat"),source("two".toByteArray(),"two.dat")))
+        engine.drain(20_000)
+        assertEquals(0,wire.sendCalls);assertTrue(repo.state.value.sendCooldownUntil>now()+150_000)
+        wire.preliminaryWait=0
+        repo.state.value.tasks.forEach{engine.retry(it.id)};engine.drain(20_000)
+        assertEquals(0,wire.sendCalls);assertTrue(repo.state.value.items.isEmpty())
+    }
+    @Test fun `changed original does not alter a retained immutable snapshot`()=runBlocking {
+        open();wire.failPart=1;val original=ByteArray(1_100_000){3};val uri=source(original)
+        engine.enqueueUpload(listOf(uri));engine.drain(20_000)
+        File(uri.path!!).writeBytes(ByteArray(original.size){4})
+        wire.failPart=null;engine.retry(repo.state.value.tasks.single().id);engine.drain(20_000)
+        val item=repo.state.value.items.single()
+        assertArrayEquals(original,repo.cache!!.materialize(item,repo.version(item.versionId),"").readBytes())
+        assertEquals(1,wire.uploadedIndices.count{it==0})
+    }
+    @Test fun `tampered private snapshot is rejected before another part is sent`()=runBlocking {
+        open();wire.failPart=1
+        engine.enqueueUpload(listOf(source(ByteArray(1_100_000){1})));engine.drain(20_000)
+        val task=repo.state.value.tasks.single()
+        File(context.filesDir,"transfer-staging/${task.profileId}/${task.id}/source/${task.title}").writeBytes(ByteArray(1_100_000){2})
+        wire.failPart=null;engine.retry(task.id);engine.drain(20_000)
+        assertEquals(TaskState.FAILED,engine.task(task.id).state)
+        assertTrue(repo.state.value.items.isEmpty());assertEquals(1,wire.uploadedIndices.size)
+    }
+    @Test fun `account switch revokes both uploads without publishing into the new account`()=runBlocking {
+        open();wire.holdUploads=true
+        engine.enqueueUpload(listOf(source("account first".toByteArray(),"account-a.bin"),source("account second".toByteArray(),"account-b.bin")))
+        val running=launch{engine.drain(20_000)}
+        withTimeout(5_000){while(wire.inFlightUploads.size<2)delay(10)}
+        wire.userId=1702;wire.update!!(TdApi.UpdateAuthorizationState(TdApi.AuthorizationStateReady()))
+        withTimeout(5_000){while(repo.state.value.accountId!=1702L||!repo.state.value.loaded)delay(10)}
+        running.join()
+        assertEquals(0,wire.sendCalls);assertTrue(repo.state.value.items.isEmpty())
+        wire.holdUploads=false
+        wire.userId=1701;wire.update!!(TdApi.UpdateAuthorizationState(TdApi.AuthorizationStateReady()))
+        withTimeout(5_000){while(repo.state.value.accountId!=1701L||!repo.state.value.loaded)delay(10)}
+        repo.state.value.tasks.forEach{engine.retry(it.id)};engine.drain(20_000)
+        assertEquals(2,repo.state.value.items.size);assertEquals(2,wire.sendCalls)
+    }
     private class MemorySettings:SessionSettings {
         private val values=java.util.concurrent.ConcurrentHashMap<String,String>()
         override fun get(name:String)=values[name]
@@ -357,6 +430,11 @@ class TransferIntegrationTest {
         var userId=1701L;var next=100L;var failPart:Int?=null;var stall=false;var stallDownload=false
         @Volatile var downloading=false
         val cancelledDownloads=mutableListOf<Int>()
+        val cancelledUploads=mutableListOf<Int>()
+        var holdUploads=false;var preliminaryWait=0
+        var maxConcurrentUploads=0
+        val inFlightUploads=java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+        val readyUploads=java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
         val messages=mutableMapOf<Long,TdApi.Message>();val files=mutableMapOf<Int,TdApi.File>()
         val uploadedIndices=mutableListOf<Int>();val deleted=mutableListOf<Long>();var history=emptyList<TdApi.Message>()
         override fun create(onUpdate:(TdApi.Object)->Unit,onError:()->Unit):TdConnection {
@@ -371,6 +449,20 @@ class TransferIntegrationTest {
                     is TdApi.CreatePrivateChat->TdApi.Chat().apply{id=this@Wire.userId}
                     is TdApi.GetChatHistory->TdApi.Messages().apply{messages=if(function.fromMessageId==0L)history.toTypedArray() else emptyArray()}
                     is TdApi.GetMessage->messages[function.messageId]?:TdApi.Error(404,"message not found")
+                    is TdApi.PreliminaryUploadFile->{
+                        if(preliminaryWait>0)TdApi.Error(429,"Too Many Requests: retry after $preliminaryWait")else {
+                            val source=File((function.file as TdApi.InputFileLocal).path)
+                            val id=(++next).toInt();val copy=File(directory,"upload-$id.bin");source.copyTo(copy,true)
+                            TdApi.File().apply{this.id=id;size=copy.length();expectedSize=size;local=TdApi.LocalFile().apply{path=copy.absolutePath;isDownloadingCompleted=true;downloadedSize=size};remote=TdApi.RemoteFile().apply{isUploadingActive=holdUploads;isUploadingCompleted=!holdUploads;uploadedSize=if(holdUploads)0 else size}}.also{
+                                files[id]=it
+                                if(holdUploads){inFlightUploads.add(id);maxConcurrentUploads=maxOf(maxConcurrentUploads,inFlightUploads.size)}
+                            }
+                        }
+                    }
+                    is TdApi.GetFile->files[function.fileId]?.also{file->
+                        if(function.fileId in readyUploads){file.remote.isUploadingCompleted=true;file.remote.isUploadingActive=false;file.remote.uploadedSize=file.size;inFlightUploads.remove(function.fileId)}
+                    }?:TdApi.Error(404,"file not found")
+                    is TdApi.CancelPreliminaryUploadFile->{cancelledUploads.add(function.fileId);inFlightUploads.remove(function.fileId);TdApi.Ok()}
                     is TdApi.DownloadFile->files[function.fileId]!!
                     is TdApi.CancelDownloadFile->{cancelledDownloads.add(function.fileId);TdApi.Ok()}
                     is TdApi.DeleteMessages->{deleted.addAll(function.messageIds.toList());function.messageIds.forEach{messages.remove(it)};TdApi.Ok()}
@@ -381,7 +473,7 @@ class TransferIntegrationTest {
                             val part=if(caption.startsWith(CloudCodec.PART))caption.removePrefix(CloudCodec.PART).model<PartCaption>().index else if(caption.startsWith(EmbeddedUpload.PREFIX))0 else null
                             if(part==failPart&&part!=null)TdApi.Error(500,"simulated temporary failure") else {
                                 if(part!=null)uploadedIndices.add(part)
-                                val id=++next;val source=File((content.document.document as TdApi.InputFileLocal).path);val target=File(directory,"$id.bin");source.copyTo(target,true)
+                                val id=++next;val source=when(val input=content.document.document){is TdApi.InputFileId->File(files[input.id]!!.local.path);is TdApi.InputFileLocal->File(input.path);else->error("Unexpected input file") };val target=File(directory,"$id.bin");source.copyTo(target,true)
                                 val native=TdApi.File().apply{this.id=id.toInt();size=target.length();expectedSize=size;local=TdApi.LocalFile().apply{path=target.absolutePath;isDownloadingCompleted=true;downloadedSize=size};remote=TdApi.RemoteFile()}
                                 files[native.id]=native
                                 TdApi.Message().apply{this.id=id;chatId=1701;this.content=TdApi.MessageDocument().apply{document=TdApi.Document().apply{fileName=target.name;mimeType="application/octet-stream";document=native};this.caption=TdApi.FormattedText(caption,emptyArray())}}.also{messages[id]=it}

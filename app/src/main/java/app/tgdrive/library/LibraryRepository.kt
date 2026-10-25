@@ -26,7 +26,7 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         mutate{it.put("settings","sendCooldownUntil",until.toString())}
         mutable.update{it.copy(sendCooldownUntil=until)}
     })
-    val remote = TelegramStorage(session,sender)
+    val remote = TelegramStorage(session,sender,::checkAccount)
     private val flushing = Mutex()
     private var maintainedAt=0L
     var cache: ContentCache? = null; private set
@@ -207,6 +207,15 @@ class LibraryRepository(val context: Context, val session: TelegramDrive, val sc
         writes.withLock {
             checkAccount(task.accountId); db().putTask(task.copy(updatedAt = now()))
             mutable.update { it.copy(tasks = db().tasks()) }
+        }
+    }
+    /** Progress must never overwrite a newer state, manifest, or retry receipt. */
+    suspend fun updateTask(id:String,account:Long,update:(TransferTask)->TransferTask)=withContext(Dispatchers.IO) {
+        writes.withLock {
+            checkAccount(account)
+            val current=db().get("tasks",id)?.model<TransferTask>()?:return@withLock
+            db().putTask(update(current).copy(updatedAt=now()))
+            mutable.update{it.copy(tasks=db().tasks())}
         }
     }
     suspend fun setLocal(value: LocalItem) = withContext(Dispatchers.IO) {

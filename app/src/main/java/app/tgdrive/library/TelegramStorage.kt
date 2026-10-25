@@ -10,46 +10,84 @@ import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSendCoordinator=TelegramSendCoordinator()) {
+class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSendCoordinator=TelegramSendCoordinator(),private val validateAccount:(Long)->Unit={}) {
+    private fun account():Long=session.state.value.accountId.also{check(it!=0L){"Open your Telegram account first."};verify(it)}
+    private fun verify(account:Long) {
+        validateAccount(account)
+        if(session.state.value.accountId!=account)throw CancellationException("Telegram account changed")
+    }
+    private suspend fun <T> bound(account:Long,block:suspend()->T):T {
+        verify(account)
+        return try{block().also{verify(account)}}catch(e:Exception){verify(account);throw e}
+    }
     private val fileLocks = ConcurrentHashMap<Int, Mutex>()
     suspend fun document(messageId: Long): TdApi.MessageDocument {
-        val message = session.call(TdApi.GetMessage(session.savedMessagesId, messageId)) as TdApi.Message
+        val owner=account()
+        val message = bound(owner){session.call(TdApi.GetMessage(session.savedMessagesId, messageId))} as TdApi.Message
         return message.content as? TdApi.MessageDocument ?: error("The original document is no longer available.")
     }
-    suspend fun sendDocument(source: File, caption: String, thumbnail:File?=null, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
+    suspend fun sendDocument(source: File, caption: String, thumbnail:File?=null, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {
+        val account=account()
+        var nativeId=0
+        try {
+        val uploaded=sender.content {
+            var file=bound(account){session.call(TdApi.PreliminaryUploadFile(TdApi.InputFileLocal(source.absolutePath),TdApi.FileTypeDocument(),16))} as TdApi.File
+            nativeId=file.id
+            currentCoroutineContext()[NativeFileObserver]?.started?.invoke(file.id)
+            withTimeout(60*60*1000L) {
+                while(!file.remote.isUploadingCompleted) {
+                    ensureActive();sender.checkAllowed()
+                    verify(account)
+                    check(file.remote.isUploadingActive){"Telegram stopped the content upload. Retry to reconcile it."}
+                    delay(250)
+                    file=bound(account){session.call(TdApi.GetFile(file.id))} as TdApi.File
+                }
+            }
+            file
+        }
+        return sender.send {
         val preview=thumbnail?.takeIf{it.exists()&&it.length() in 1..204_800}?.let {
             val bounds=android.graphics.BitmapFactory.Options().apply{inJustDecodeBounds=true}
             android.graphics.BitmapFactory.decodeFile(it.absolutePath,bounds)
             if(bounds.outWidth in 1..320&&bounds.outHeight in 1..320)TdApi.InputThumbnail(TdApi.InputFileLocal(it.absolutePath),bounds.outWidth,bounds.outHeight)else null
         }
-        val first = session.call(TdApi.SendMessage().apply {
+        val first = bound(account){session.call(TdApi.SendMessage().apply {
             chatId = session.savedMessagesId
-            inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileLocal(source.absolutePath), preview, true), TdApi.FormattedText(caption, emptyArray()))
-        }) as TdApi.Message
-        pending(first)
-        session.awaitSent(first)
+            inputMessageContent = TdApi.InputMessageDocument(TdApi.InputDocument(TdApi.InputFileId(uploaded.id), preview, true), TdApi.FormattedText(caption, emptyArray()))
+        })} as TdApi.Message
+        bound(account){pending(first);session.awaitSent(first)}
+        }
+        } finally {
+            // Release only this preliminary upload. Never delete acknowledged messages or another account's native ID.
+            if(nativeId!=0&&session.state.value.accountId==account)withContext(NonCancellable){runCatching{withTimeout(5_000){session.call(TdApi.CancelPreliminaryUploadFile(nativeId))}}}
+        }
     }
-    suspend fun sendText(text: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message = sender.send {
+    suspend fun sendText(text: String, pending: suspend (TdApi.Message) -> Unit = {}): TdApi.Message {
+        val owner=account()
+        return sender.send {
+        verify(owner)
         require(text.length <= 4000) { "Metadata text is too large" }
-        val first = session.call(TdApi.SendMessage().apply {
+        val first = bound(owner){session.call(TdApi.SendMessage().apply {
             chatId = session.savedMessagesId
             inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, false)
-        }) as TdApi.Message
-        pending(first)
-        session.awaitSent(first)
+        })} as TdApi.Message
+        bound(owner){pending(first);session.awaitSent(first)}
+        }
     }
     suspend fun recoverPending(id: Long): TdApi.Message? {
         if (id == 0L) return null
-        session.resolvedSend(id)?.let { return it }
+        val owner=account()
+        bound(owner){session.resolvedSend(id)}?.let { return it }
         return try {
-            val m = session.call(TdApi.GetMessage(session.savedMessagesId, id)) as TdApi.Message
-            if (m.sendingState is TdApi.MessageSendingStateFailed) null else session.awaitSent(m)
+            val m = bound(owner){session.call(TdApi.GetMessage(session.savedMessagesId, id))} as TdApi.Message
+            if (m.sendingState is TdApi.MessageSendingStateFailed) null else bound(owner){session.awaitSent(m)}
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
             if(e.message?.contains("not found",true)==true || e.message?.contains("MESSAGE_ID_INVALID")==true) null else throw e
         }
     }
     suspend fun delete(ids: List<Long>) {
-        ids.distinct().chunked(100).forEach { sender.send { session.call(TdApi.DeleteMessages(session.savedMessagesId, it.toLongArray(), true)) } }
+        val owner=account()
+        ids.distinct().chunked(100).forEach { ids->sender.send { bound(owner){session.call(TdApi.DeleteMessages(session.savedMessagesId, ids.toLongArray(), true))} } }
     }
     suspend fun readAll(messageId: Long): File {
         val document = document(messageId).document.document
@@ -75,7 +113,10 @@ class TelegramStorage(val session: TelegramDrive,private val sender:TelegramSend
             withContext(Dispatchers.IO) { RandomAccessFile(file.local.path, "r").use { r -> r.seek(position); ByteArray(count).also { r.readFully(it) } } }
         }
     }
-    suspend fun history(from: Long = 0): List<TdApi.Message> = (session.call(TdApi.GetChatHistory(session.savedMessagesId, from, 0, 100, false)) as TdApi.Messages).messages.toList()
+    suspend fun history(from: Long = 0): List<TdApi.Message> {
+        val owner=account()
+        return (bound(owner){session.call(TdApi.GetChatHistory(session.savedMessagesId, from, 0, 100, false))} as TdApi.Messages).messages.toList()
+    }
 }
 
 fun File.sha256(): String = inputStream().use { source ->
