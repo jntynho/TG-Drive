@@ -17,6 +17,8 @@ object DriveStyle {
     val Card = Color(0xFF333536)
     val Blue = Color(0xFF73B2FF)
     val ActionBlue = Color(0xFF0068D9)
+    val ChartBlue = Color(0xFF0087FF)
+    val Success = Color(0xFF69D994)
     val OnAction = Color.White
     val DisabledAction = Color(0xFF123552)
     val OnDisabledAction = Color(0xFF8A9AA8)

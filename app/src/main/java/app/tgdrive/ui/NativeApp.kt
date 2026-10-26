@@ -38,7 +38,7 @@ data class SystemActions(
     val transferSettings:()->Unit={},val vaultSettings:()->Unit={},
 )
 enum class NativeTab(val title: String, val icon: ImageVector) {
-    HOME("Home",DriveIcons.Home), GALLERY("Gallery",DriveIcons.PhotoLibrary), AUDIO("Audio",DriveIcons.AudioFile), SETTINGS("Settings",DriveIcons.Tune),
+    HOME("Home",DriveIcons.Home), GALLERY("Gallery",DriveIcons.PhotoLibrary), AUDIO("Audio",DriveIcons.MusicNotes), SETTINGS("Settings",DriveIcons.Settings),
     // Keep serialized enum names readable when Android restores a 0.3.0 activity.
     FILES("Home",DriveIcons.Home), TRANSFERS("Activity",DriveIcons.SwapVert), BACKUPS("Backups",DriveIcons.Backup)
 }
@@ -125,6 +125,7 @@ fun NativeApp(bundle: SessionBundle, pool: SessionPool, system: SystemActions,re
             Scaffold(modifier=Modifier.imePadding(),containerColor=if(signingIn)DriveStyle.SignInCanvas else MaterialTheme.colorScheme.background,
                 snackbarHost={SnackbarHost(snackbar)}, topBar={
                     DriveAppHeader(headerTitle,back,actions={
+                        if(!signingIn&&state.loaded&&tab==NativeTab.HOME&&homeRoute=="activity")TransferPageMenu(state,bundle,system)
                         if(!signingIn&&state.loaded&&(tab==NativeTab.GALLERY||tab==NativeTab.AUDIO)) {
                             MediaSortMenu(tab==NativeTab.GALLERY,if(tab==NativeTab.GALLERY)gallerySort else audioSort){if(tab==NativeTab.GALLERY)gallerySort=it else audioSort=it}
                             if(tab==NativeTab.GALLERY)TextButton({gallerySelecting=!gallerySelecting;gallerySelected=emptyList()}){Text(if(gallerySelecting)"Done"else"Select")}

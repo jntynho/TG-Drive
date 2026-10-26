@@ -24,6 +24,7 @@ import app.tgdrive.data.formatBytes
 import app.tgdrive.library.*
 
 @Composable fun SettingsPage(state:LibraryState,bundle:SessionBundle,pool:SessionPool,system:SystemActions,onClose:()->Unit={},page:String,onPage:(String)->Unit,onAccounts:()->Unit={},query:String="",search:HeaderSearch?=null){
+    val uriHandler=androidx.compose.ui.platform.LocalUriHandler.current
     var confirmCache by rememberSaveable{mutableStateOf(false)}
     var info by remember{mutableStateOf<String?>(null)};var cleanup by remember{mutableStateOf<List<Item>?>(null)}
     BackHandler { if(page!="home")onPage(settingsParent(page)) else onClose() }
@@ -119,6 +120,11 @@ import app.tgdrive.library.*
                         "about"->{
                             item{SectionTitle("TG Drive","${BuildConfig.VERSION_NAME} · build ${BuildConfig.VERSION_CODE}")}
                             item{InfoCard("Independent Telegram client","Your files use your own account. No claim of unlimited storage, guaranteed SMS or permanent provider availability is made.",DriveIcons.CloudQueue)}
+                            item{DriveGroup{
+                                ActionRow("Solar Linear icons","By 480 Design · adapted as native vectors",DriveIcons.Info){uriHandler.openUri("https://www.figma.com/community/file/1166831539721848736")}
+                                DriveDivider()
+                                ActionRow("Icon license","Creative Commons Attribution 4.0 International",DriveIcons.Shield){uriHandler.openUri("https://creativecommons.org/licenses/by/4.0/")}
+                            }}
                             item{SelectionContainer{Text("Signing certificate SHA-256:\n${signingFingerprint(bundle.library.context)}",style=MaterialTheme.typography.bodySmall)}}
                             item{InfoCard("Updates preserve identity","Install updates signed with the same certificate. Keep your existing app installed when updating to preserve its local settings.")}
                             item{InfoCard("Encryption implementation","Vault files use Tink authenticated streaming encryption with password and separate recovery wraps. The application format and native-library provenance still need independent security review before production assurances.")}

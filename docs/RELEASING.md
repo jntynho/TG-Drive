@@ -24,7 +24,7 @@ Published Release assets use stable names: `tg-drive-arm64-v8a.apk`, `tg-drive-a
 
 Choose one APK matching the device. These are standalone APKs, not a set that must be installed together. All outputs share the application ID, version code/name and signing identity. Ordinary debug/emulator builds keep their existing universal packaging; opt into distribution APKs with `-PsplitApks=true`. ABI selection changes only packaging, not transfer, account, encryption or preview code.
 
-Push to `main`, a `v…` tag, or workflow dispatch with `publish=true` creates a GitHub Release. Open Releases → latest → Assets and download a `.apk` directly; Actions artifacts are still ZIP archives and the automatic source ZIP/TAR files are not app installers. Default manual version is `0.10.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
+Push to `main`, a `v…` tag, or workflow dispatch with `publish=true` creates a GitHub Release. Open Releases → latest → Assets and download a `.apk` directly; Actions artifacts are still ZIP archives and the automatic source ZIP/TAR files are not app installers. Default manual version is `0.11.0`; `APP_VERSION_CODE` is the workflow run number. Keep version codes monotonic. No Google Play upload is configured. An APK artifact is distinct from a published GitHub release; a locally compiled test APK is distinct from an executed device test.
 
 ## Existing signing identity
 
@@ -65,3 +65,5 @@ Local packaging validation for 0.2.1: ARM64 APK approximately 39.7 MB (19.0 MB i
 0.9 is a UI/UX and behavior correction release. The cloud caption/journal format stays compatible with 0.7/0.8, and the existing signing identity is mandatory. See [the correction matrix](UI-UX-0.9.ar.md) for details and device-validation limits.
 
 0.10 combines the [full UI review](UI-UX-SKILL-REVIEW.ar.md) and [upload audit](UPLOAD-0.10.ar.md). Healthy publications no longer have a fixed inter-message delay. Two bounded native content uploads can overlap; server cooldowns, configured pacing, thermal protection and recovery remain enforced. Cloud captions/journal and the signing identity stay compatible with 0.7–0.9.
+
+0.11 implements the approved [Solar / Home / Activity design](SOLAR-0.11.ar.md). SVG sources are pinned and converted offline to native vectors, with CC BY 4.0 attribution in About. There is no new runtime dependency. The upload protocol and signing identity remain unchanged.

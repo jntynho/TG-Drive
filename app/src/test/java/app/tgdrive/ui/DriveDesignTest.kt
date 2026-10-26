@@ -294,6 +294,67 @@ class DriveDesignTest {
         compose.onNodeWithText("Your indexed library").assertIsDisplayed()
     }
 
+    @Test fun activityUsesOneFilterAndKeepsPerFileActionsReachable() {
+        var paused="";var retried=""
+        val active=app.tgdrive.library.TransferTask(id="active",kind=app.tgdrive.library.TaskKind.UPLOAD,title="Weekend.jpg",state=app.tgdrive.library.TaskState.TRANSFERRING,total=24_000_000,done=18_000_000)
+        val failed=active.copy(id="failed",title="Retry.pdf",state=app.tgdrive.library.TaskState.FAILED,error="Connection interrupted")
+        val saved=active.copy(id="saved",title="Coast.jpg",state=app.tgdrive.library.TaskState.COMPLETED,updatedAt=System.currentTimeMillis())
+        render{TransfersContent(LibraryState(tasks=listOf(active,failed,saved)),TransferCallbacks(pause={paused=it},retry={retried=it}))}
+        compose.onNodeWithText("All transfers").assertIsDisplayed()
+        compose.onNodeWithText("Pause all").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Pause Weekend.jpg").performClick();assertEquals("active",paused)
+        compose.onNodeWithContentDescription("Filter transfers").performClick()
+        compose.onNode(hasText("Failed") and SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Selected)).performClick()
+        compose.onNodeWithText("Weekend.jpg").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Actions for Retry.pdf").performClick()
+        compose.onNodeWithText("Try again").performClick();assertEquals("failed",retried)
+        compose.onNodeWithContentDescription("Filter transfers").performClick()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Coast.jpg").assertIsDisplayed()
+        compose.onNodeWithText("Retry.pdf").assertDoesNotExist()
+        screenshot("activity-done")
+    }
+
+    @Test fun lockedTransferRowsHideTheOriginalNameAndError() {
+        val task=app.tgdrive.library.TransferTask(kind=app.tgdrive.library.TaskKind.UPLOAD,title="Secret photo.jpg",vaultId="locked",state=app.tgdrive.library.TaskState.FAILED,error="Secret photo.jpg could not be read")
+        render{TransfersContent(LibraryState(tasks=listOf(task)))}
+        compose.onNodeWithText("Protected file").assertIsDisplayed()
+        compose.onAllNodes(hasText("Secret photo.jpg",substring=true),useUnmergedTree=true).assertCountEquals(0)
+        compose.onNodeWithText("Unlock the vault to view transfer details.").assertIsDisplayed()
+    }
+
+    @Test fun accountWaitDisablesUploadRetryButKeepsTheQueueVisible() {
+        val task=app.tgdrive.library.TransferTask(kind=app.tgdrive.library.TaskKind.UPLOAD,title="Waiting.jpg",state=app.tgdrive.library.TaskState.RETRY_WAIT)
+        render{TransfersContent(LibraryState(tasks=listOf(task),sendCooldownUntil=System.currentTimeMillis()+160_000))}
+        compose.onNodeWithContentDescription("Actions for Waiting.jpg").performClick()
+        compose.onNodeWithText("Resume").assertIsNotEnabled()
+        compose.onNodeWithText("Cancel transfer").assertIsEnabled()
+    }
+
+    @Test fun globalTransferActionsLiveInTheHeaderMenu() {
+        var pauses=0
+        val task=app.tgdrive.library.TransferTask(kind=app.tgdrive.library.TaskKind.UPLOAD,title="Active.jpg",state=app.tgdrive.library.TaskState.TRANSFERRING)
+        render{TransferGlobalMenu(LibraryState(tasks=listOf(task)),TransferCallbacks(pauseAll={pauses++}))}
+        compose.onNodeWithText("Pause all").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Transfer options").performClick()
+        compose.onNodeWithText("Pause all").performClick()
+        assertEquals(1,pauses)
+    }
+
+    @Test fun largeTextActivityKeepsWaitingActionsAndCompletionHistoryReachable() {
+        val task=app.tgdrive.library.TransferTask(kind=app.tgdrive.library.TaskKind.UPLOAD,title="A long queued filename.pdf",total=12_000_000)
+        render{
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)){
+                Box(Modifier.width(320.dp)){TransfersContent(LibraryState(tasks=listOf(task,task.copy(id="saved",title="Saved.pdf",state=app.tgdrive.library.TaskState.COMPLETED,updatedAt=System.currentTimeMillis()))))}
+            }
+        }
+        compose.onNodeWithContentDescription("Actions for A long queued filename.pdf").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithText("Cancel transfer").assertIsDisplayed()
+        compose.onNodeWithText("Cancel transfer").performClick()
+        compose.onNodeWithText("Clear finished").performScrollTo().assertIsDisplayed()
+    }
+
     @Test fun lockedScreenDisplaysAuthenticationFailureAndKeepsRecoveryReachable() {
         var unlocks=0
         var settings=0

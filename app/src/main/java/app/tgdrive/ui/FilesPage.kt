@@ -181,7 +181,7 @@ fun folderPath(id:String,folders:List<Folder>):String {
     if(local?.missing==true)Text("Reference unavailable",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
     if(item.tags.isNotEmpty())Text(item.tags.take(2).joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
 }}
-fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.startsWith("video/")->DriveIcons.Videocam;mime.startsWith("audio/")->DriveIcons.AudioFile;mime=="application/pdf"->DriveIcons.PictureAsPdf;else->DriveIcons.InsertDriveFile}
+fun fileIcon(mime:String)=when{mime.startsWith("image/")->DriveIcons.Image;mime.startsWith("video/")->DriveIcons.Videocam;mime.startsWith("audio/")->DriveIcons.AudioFile;mime=="application/pdf"->DriveIcons.PictureAsPdf;mime in setOf("application/zip","application/x-zip-compressed","application/x-7z-compressed","application/x-rar-compressed","application/vnd.rar")->DriveIcons.Archive;else->DriveIcons.InsertDriveFile}
 
 @Composable fun FileThumbnail(item:Item,bundle:SessionBundle?,modifier:Modifier,square:Boolean=false) {
     var retry by remember(item.id,item.versionId){mutableIntStateOf(0)}

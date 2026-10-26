@@ -121,6 +121,7 @@ Read the [security boundaries](docs/SECURITY.md) before relying on encrypted vau
 | [Upload pipeline](docs/UPLOAD-0.8.md) | Parallel content preparation and coordinated publication |
 | [UI/UX corrections · Arabic](docs/UI-UX-0.9.ar.md) | The 0.9 audit corrections and practical limits |
 | [UI review and fixes · Arabic](docs/UI-UX-SKILL-REVIEW.ar.md) | The full interface review, applied corrections and validation |
+| [Solar and approved layouts · Arabic](docs/SOLAR-0.11.ar.md) | Icon sources, semicircle dashboard and grouped Activity |
 | [Aero Fold artwork](docs/brand/README.md) | Editable SVG layers and adaptive Android icon sizing |
 
 ## Build from source
@@ -162,6 +163,6 @@ For code contributions, keep changes focused and run the checks relevant to the 
 
 ## Acknowledgements
 
-Built with [TDLib](https://github.com/tdlib/td), [Jetpack Compose](https://developer.android.com/compose), [Media3](https://developer.android.com/media/media3) and [Tink](https://github.com/tink-crypto/tink). Interface icons use [Lucide](https://lucide.dev); vendored source and its license are in [third_party/lucide](third_party/lucide).
+Built with [TDLib](https://github.com/tdlib/td), [Jetpack Compose](https://developer.android.com/compose), [Media3](https://developer.android.com/media/media3) and [Tink](https://github.com/tink-crypto/tink). Interface icons use **Solar Linear by [480 Design](https://www.figma.com/community/file/1166831539721848736)**, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Selected SVG sources, attribution and the native-vector conversion details are in [third_party/solar](third_party/solar/SOURCE.md).
 
 TG Drive is an independent project and is not affiliated with Telegram.

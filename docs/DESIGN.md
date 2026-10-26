@@ -71,4 +71,9 @@ Switches follow the two supplied close-up references: 64 × 28 dp pill track, 40
 
 ## 0.5 refinement
 
-See UI-AUDIT.md and UI-REVIEW.ar.md for the pre-implementation audit. A shared route-aware header replaces the branded toolbar; an accessible circular Telegram avatar opens accounts. Gallery tiles use square corners and a 4:5 aspect ratio with no visible filename or menu. The viewer preserves the file action menu, offers immersive pinch/double-tap image zoom with bounded pan, and gives each gallery video its own lifecycle-bound ExoPlayer. Audio uses the existing background service. Lucide vectors are vendored with their licenses; the old extended Material icon dependency is removed. Original SVG and Android launcher assets live in docs/brand and res.
+See UI-AUDIT.md and UI-REVIEW.ar.md for the pre-implementation audit. A shared route-aware header replaces the branded toolbar; account switching is available through Settings. Gallery tiles use square corners and a 4:5 aspect ratio with no visible filename or menu. The viewer preserves the file action menu, offers immersive pinch/double-tap image zoom with bounded pan, and gives each gallery video its own lifecycle-bound ExoPlayer. Audio uses the existing background service. Solar Linear vectors by 480 Design are vendored with their CC BY 4.0 license and attribution; the old extended Material icon dependency is removed. Original SVG and Android launcher assets live in docs/brand and res.
+
+
+## 0.11 approved layouts
+
+The [approved design notes](SOLAR-0.11.ar.md) cover the Solar Linear migration, visible-library composition semicircle and grouped Activity page. Activity uses a single anchored status filter; global transfer actions live in the page header overflow. Task rows remain lazy and preserve account/vault privacy, provider waits, contextual actions and actual completion state. Solar attribution is linked in About.
